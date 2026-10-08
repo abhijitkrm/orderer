@@ -56,14 +56,15 @@ build_matcher() {
   mkdir -p "$MWORK"
   case $l in
     rust) (cd "$d" && cargo build --quiet --release --bins 2>/dev/null) ;;
-    go)   for t in matcherfuzz matcherrun matcherrecover matchersnap; do
+    go)   for t in matcherfuzz matcherrun matcherrecover matchersnap matcherbench; do
             (cd "$d" && go build -o "$MWORK/go-$t" "./cmd/$t"); done ;;
     cpp)  (cd "$d" && cmake -S . -B build -DCMAKE_BUILD_TYPE=Release >/dev/null \
-            && cmake --build build --target matcherfuzz matcherrun matcherrecover matchersnap -j >/dev/null) ;;
+            && cmake --build build --target matcherfuzz matcherrun matcherrecover matchersnap matcherbench -j >/dev/null) ;;
     ts)   (cd "$d" && npm run build >/dev/null 2>&1) ;;
     java) (cd "$d" && mkdir -p out && javac -d out --release 17 \
             src/main/java/io/github/abhijitkrm/matcher/*.java \
-            tests/MatcherFuzz.java tests/MatcherRun.java tests/MatcherRecover.java tests/MatcherSnap.java) ;;
+            tests/MatcherFuzz.java tests/MatcherRun.java tests/MatcherRecover.java tests/MatcherSnap.java \
+            bench/MatcherBench.java) ;;
   esac
 }
 
@@ -79,6 +80,19 @@ mt() {
     java) local c; case $t in matcherfuzz) c=MatcherFuzz;; matcherrun) c=MatcherRun;;
             matcherrecover) c=MatcherRecover;; matchersnap) c=MatcherSnap;; esac
           java -cp "$d/out" "$c" "$@" ;;
+  esac
+}
+
+# mbench <lang> <prefix> — matcher-<lang>'s own matcherbench (spec/BENCH.md of
+# matcher): the matching core alone, single book. Prints its RESULTS row.
+mbench() {
+  local l=$1 d; shift; d=$(matcher_dir "$l")
+  case $l in
+    rust) "$d/target/release/matcher_bench" "$@" ;;
+    go)   "$MWORK/go-matcherbench" "$@" ;;
+    cpp)  "$d/build/matcherbench" "$@" ;;
+    ts)   node "$d/dist/bench/matcherbench.js" "$@" ;;
+    java) java -cp "$d/out" MatcherBench "$@" ;;
   esac
 }
 

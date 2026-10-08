@@ -9,6 +9,151 @@ Pipeline latencies below come from **open-loop saturation runs**: one
 producer publishes the whole corpus as fast as the ingress accepts it. They
 measure queueing delay at full load (milliseconds), not service time.
 
+## All five ports: isolated vs integrated (2026-10-08)
+
+`COOLDOWN=5 scripts/bench.sh --n 10000000` on the same Apple M1 (4P+4E
+cores, 16 GB, SSD 85% full), one producer. orderer-ts was rerun separately
+after a loader fix (its 730 MB W6 corpus exceeded V8's string limit). Three
+layers of each language's matching core:
+
+- **matcher alone**: matcher-<lang>'s own `matcherbench` on W4 (single
+  book, matcher's protocol, per-op clock reads).
+- **core**: orderer `--mode core`, the same core as orderer embeds it.
+  `untimed` is the eff baseline.
+- **pipe**: the whole engine on W6 (64 symbols). `off` = no journals (rings,
+  routing, egress); `durable` = the gated configuration (binary command
+  journals, fsync every 1024 records).
+
+| impl | matcher alone W4 | core W4 untimed | core W6 untimed | pipe P=1 off | pipe best off | pipe P=1 durable | pipe best durable | eff(4) durable |
+|---|---|---|---|---|---|---|---|---|
+| rust | 9.06M | 23.8M | 11.7M | 15.8M | 28.1M (P=3) | 10.2M | 21.8M (P=3) | 0.41 |
+| cpp | 13.1M | 23.5M | 22.3M | 13.5M | 30.2M (P=3) | 8.8M | 22.8M (P=3) | 0.21 |
+| java | 7.84M | 17.4M | 11.9M | 7.7M | 14.9M (P=4) | 6.9M | 9.4M (P=3) | 0.19 |
+| go | 4.58M | 7.9M | 6.4M | 2.6M | 9.6M (P=4) | 3.6M | 7.4M (P=3) | 0.16 |
+| ts | 4.81M | 5.9M | 3.7M | 3.7M | 7.0M (P=3) | 2.9M | 6.8M (P=3) | 0.42 |
+
+All throughputs are ops/s. "matcher alone" is timed per operation (two
+clock reads each), so compare it with the core rows' timed column below,
+not with `untimed`. On that comparison, orderer's timed core W4 row matches
+or beats matcher's own bench for Rust (10.7M vs 9.1M), C++ (13.3M vs
+13.1M) and Java (9.8M vs 7.8M). Go is 3% below (4.46M vs 4.58M) and TS
+12% below (4.23M vs 4.81M); neither gap is explained yet.
+
+Reading it:
+
+- **Native ports lead and converge.** Rust and C++ reach 28–30M with
+  journals off and about 22M durable at P=3. Their cores differ by 1.9× on
+  W6 (C++ 22.3M vs Rust 11.7M untimed; Rust's SipHash `HashMap` per symbol
+  lookup is the likely cause). The pipelines land within 10% of each
+  other, because the rings, routing and disk bound them, not the core.
+- **Rust's pipeline at P=1 (15.8M, eff 1.35) beats its own core loop.**
+  The pipeline moves event handling to the egress thread, so the engine
+  thread does less per command than core mode's single loop. Not profiled.
+- **Java** sits at half the native rate: 14.9M journals off, 9.4M durable.
+  Its p99.9 of 95–216 ms on every pipe row are collector pauses.
+  matcher-java allocates one record per event (`alloc_b_op` 24 on W6).
+- **Go is the weakest integrated port.** P=1 with journals off (2.6M) is
+  even slower than P=1 durable (3.6M), and p99/p99.9 run to 13–120 ms.
+  matcher-go hands every event to its sink through an interface, so each
+  one escapes to the heap (`alloc_b_op` 72). The collector then competes
+  with goroutines that busy-spin on locked OS threads. Candidates: a
+  non-escaping sink path in matcher-go, backoff instead of busy-spin for
+  engines, and `GOGC` tuning. The core itself (6.4M) is fine.
+- **TypeScript** scales from 3.7M to 7.0M across workers. The owner
+  thread, which publishes and runs every egress plug, bounds it. Its
+  `eff` (0.42 durable) is among the best, because the engines are not the
+  bottleneck.
+- **The durable gate (A4) is still not met by any port** on this machine.
+  The phase-6 analysis below still applies: `F_FULLFSYNC` bandwidth on a
+  nearly full SSD, and 4 performance cores shared by producer, router,
+  engines, egress and I/O threads. P=4 is often below P=3 for the same
+  reason.
+- **Latency columns are open-loop saturation.** One producer publishes 10M
+  commands as fast as ingress accepts, so the millisecond p50s are queueing
+  delay, not service time.
+
+### Per-language rows
+
+#### orderer-rust @ 2026-10-08 d933299
+env: Apple M1 / macos aarch64 / orderer-rust 0.1.0; W6 = 10000000 commands, 64 symbols
+| workload | mode | P | prod | ops | ops/s | eff | mean | p50 | p90 | p99 | p99.9 | max | config |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| w4 | isolated | - | - | 1000000 | 9058108 |  | 83 | 42 | 208 | 542 | 1750 | 906542 | matcher-rust matcherbench |
+| w4 | core | - | - | 1000000 | 10694377 |  | 66 | 42 | 167 | 417 | 750 | 56083 | untimed=23811697 |
+| w6 | core | - | - | 10000000 | 5118690 |  | 159 | 84 | 250 | 666 | 1500 | 46834541 | untimed=11733020 |
+| w6 | pipe | 1 | 1 | 10000000 | 15813207 | 1.35 | 1293088 | 1181958 | 1650375 | 2730333 | 4360209 | 4784667 | journal=off fsync=1024 |
+| w6 | pipe | 2 | 1 | 10000000 | 27262049 | 1.16 | 839494 | 764291 | 1118916 | 2142000 | 3088458 | 3379791 | journal=off fsync=1024 |
+| w6 | pipe | 3 | 1 | 10000000 | 28058627 | 0.80 | 1068133 | 998959 | 1352833 | 2727375 | 7899250 | 10045083 | journal=off fsync=1024 |
+| w6 | pipe | 4 | 1 | 10000000 | 26860976 | 0.57 | 1179927 | 1135459 | 1627916 | 2456709 | 7792666 | 8723417 | journal=off fsync=1024 |
+| w6 | pipe | 1 | 1 | 10000000 | 10199570 | 0.87 | 1950013 | 1646875 | 2414333 | 5192417 | 52319375 | 56295167 | journal=binary fsync=1024 |
+| w6 | pipe | 2 | 1 | 10000000 | 19844097 | 0.85 | 1078785 | 928042 | 1532125 | 4303166 | 7617750 | 8084542 | journal=binary fsync=1024 |
+| w6 | pipe | 3 | 1 | 10000000 | 21832556 | 0.62 | 1170940 | 1017917 | 1696750 | 4031542 | 8410542 | 10720792 | journal=binary fsync=1024 |
+| w6 | pipe | 4 | 1 | 10000000 | 19385505 | 0.41 | 1476325 | 1287416 | 2076750 | 6249791 | 11081750 | 11911375 | journal=binary fsync=1024 |
+
+#### orderer-cpp @ 2026-10-08 dbda998
+env: Apple M1 / orderer-cpp 0.1.0; W6 = 10000000 commands, 64 symbols
+| workload | mode | P | prod | ops | ops/s | eff | mean | p50 | p90 | p99 | p99.9 | max | config |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| w4 | isolated | - | - | 1000000 | 13070087 |  | 58 | 42 | 167 | 375 | 833 | 28292 | matcher-cpp matcherbench |
+| w4 | core | - | - | 1000000 | 13305916 |  | 56 | 41 | 167 | 375 | 584 | 35041 | untimed=23477071 |
+| w6 | core | - | - | 10000000 | 10868435 |  | 73 | 42 | 167 | 500 | 2792 | 182375 | untimed=22294692 |
+| w6 | pipe | 1 | 1 | 10000000 | 13538367 | 0.61 | 1505551 | 1327042 | 1917458 | 3608541 | 13641875 | 16559208 | journal=off fsync=1024 |
+| w6 | pipe | 2 | 1 | 10000000 | 26127454 | 0.59 | 878984 | 795875 | 1186875 | 2002375 | 3153834 | 3340208 | journal=off fsync=1024 |
+| w6 | pipe | 3 | 1 | 10000000 | 30211579 | 0.45 | 862102 | 815334 | 1212125 | 1811500 | 2732166 | 3465292 | journal=off fsync=1024 |
+| w6 | pipe | 4 | 1 | 10000000 | 27537014 | 0.31 | 1016792 | 970334 | 1413042 | 1988917 | 3555375 | 4321000 | journal=off fsync=1024 |
+| w6 | pipe | 1 | 1 | 10000000 | 8812342 | 0.40 | 2326310 | 2073083 | 3118334 | 5635958 | 8158625 | 8717291 | journal=binary fsync=1024 |
+| w6 | pipe | 2 | 1 | 10000000 | 17571037 | 0.39 | 1272538 | 1178583 | 1708250 | 2524541 | 4306584 | 6193334 | journal=binary fsync=1024 |
+| w6 | pipe | 3 | 1 | 10000000 | 22812216 | 0.34 | 1085099 | 984292 | 1586333 | 2796083 | 3845459 | 4763459 | journal=binary fsync=1024 |
+| w6 | pipe | 4 | 1 | 10000000 | 18441164 | 0.21 | 1426008 | 1135500 | 2053958 | 8561625 | 15328416 | 15919750 | journal=binary fsync=1024 |
+
+#### orderer-java @ 2026-10-08 26bdeb5
+env: Apple M1 / orderer-java 0.1.0 / java 20.0.1; W6 = 10000000 commands, 64 symbols
+| workload | mode | P | prod | ops | ops/s | eff | mean | p50 | p90 | p99 | p99.9 | max | config |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| w4 | isolated | - | - | 1000000 | 7841705 |  |  | 42 | 292 | 708 | 2292 | 83666 | matcher-java matcherbench |
+| w4 | core | - | - | 1000000 | 9798814 |  | 74 | 42 | 250 | 459 | 750 | 69292 | untimed=17442418 alloc_b_op=12 |
+| w6 | core | - | - | 10000000 | 8426327 |  | 102 | 42 | 291 | 666 | 1167 | 148959 | untimed=11880784 alloc_b_op=24 |
+| w6 | pipe | 1 | 1 | 10000000 | 7734826 | 0.65 | 2656032 | 2278375 | 2959166 | 5271958 | 96577334 | 96764792 | journal=off fsync=1024 |
+| w6 | pipe | 2 | 1 | 10000000 | 11847425 | 0.50 | 1906924 | 1367042 | 2020166 | 3741542 | 162983125 | 163989334 | journal=off fsync=1024 |
+| w6 | pipe | 3 | 1 | 10000000 | 12797677 | 0.36 | 1850084 | 1232417 | 2031000 | 4880750 | 201030333 | 202002208 | journal=off fsync=1024 |
+| w6 | pipe | 4 | 1 | 10000000 | 14889754 | 0.31 | 1737838 | 1391333 | 2089792 | 3124708 | 132466458 | 133503833 | journal=off fsync=1024 |
+| w6 | pipe | 1 | 1 | 10000000 | 6892582 | 0.58 | 2957670 | 2568834 | 3231583 | 6274417 | 111493708 | 111676166 | journal=binary fsync=1024 |
+| w6 | pipe | 2 | 1 | 10000000 | 9257314 | 0.39 | 2452353 | 1735000 | 2618291 | 5808583 | 215807417 | 216083917 | journal=binary fsync=1024 |
+| w6 | pipe | 3 | 1 | 10000000 | 9387348 | 0.26 | 2454737 | 1658417 | 3218625 | 7414084 | 130905958 | 132481875 | journal=binary fsync=1024 |
+| w6 | pipe | 4 | 1 | 10000000 | 9169806 | 0.19 | 2453200 | 1761167 | 3100917 | 8590000 | 94936167 | 180018958 | journal=binary fsync=1024 |
+
+#### orderer-go @ 2026-10-08 0c4d9ff
+env: Apple M1 / orderer-go 0.1.0 / go1.27.1; W6 = 10000000 commands, 64 symbols
+| workload | mode | P | prod | ops | ops/s | eff | mean | p50 | p90 | p99 | p99.9 | max | config |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| w4 | isolated | - | - | 1000000 | 4578693 |  | 179 | 125 | 334 | 708 | 3250 | 145084 | matcher-go matcherbench |
+| w4 | core | - | - | 1000000 | 4463091 |  | 185 | 125 | 334 | 750 | 2583 | 273083 | untimed=7893262 alloc_b_op=80 |
+| w6 | core | - | - | 10000000 | 4589209 |  | 181 | 166 | 292 | 708 | 1708 | 164500 | untimed=6437434 alloc_b_op=72 |
+| w6 | pipe | 1 | 1 | 10000000 | 2592462 | 0.40 | 7901503 | 4548625 | 11315500 | 72714834 | 119391292 | 135786917 | journal=off fsync=1024 |
+| w6 | pipe | 2 | 1 | 10000000 | 7413553 | 0.58 | 2924677 | 2246167 | 3217916 | 12824875 | 81126958 | 110041625 | journal=off fsync=1024 |
+| w6 | pipe | 3 | 1 | 10000000 | 7577757 | 0.39 | 2878785 | 1715333 | 4005416 | 22986666 | 65861875 | 101939042 | journal=off fsync=1024 |
+| w6 | pipe | 4 | 1 | 10000000 | 9560923 | 0.37 | 2804378 | 2274042 | 3926791 | 13501334 | 51654625 | 91706709 | journal=off fsync=1024 |
+| w6 | pipe | 1 | 1 | 10000000 | 3576786 | 0.56 | 5704249 | 4796750 | 5739667 | 35965625 | 86333792 | 97361292 | journal=binary fsync=1024 |
+| w6 | pipe | 2 | 1 | 10000000 | 6277503 | 0.49 | 3465252 | 2769209 | 4389208 | 14391333 | 50887417 | 67234792 | journal=binary fsync=1024 |
+| w6 | pipe | 3 | 1 | 10000000 | 7379936 | 0.38 | 3209332 | 1981750 | 3638875 | 27991459 | 69616334 | 87961125 | journal=binary fsync=1024 |
+| w6 | pipe | 4 | 1 | 10000000 | 4157626 | 0.16 | 5251705 | 3322333 | 11707042 | 20145250 | 120981708 | 123890917 | journal=binary fsync=1024 |
+
+#### orderer-ts @ 2026-10-08 1d7db6e
+env: Apple M1 / orderer-ts 0.1.0 / node v22.20.0; W6 = 10000000 commands, 64 symbols
+| workload | mode | P | prod | ops | ops/s | eff | mean | p50 | p90 | p99 | p99.9 | max | config |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| w4 | isolated | - | - | 1000000 | 4809577 |  |  | 125 | 417 | 834 | 1334 | 534167 | matcher-ts matcherbench |
+| w4 | core | - | - | 1000000 | 4233532 |  | 200 | 125 | 459 | 1041 | 1750 | 1048208 | untimed=5919183 |
+| w6 | core | - | - | 10000000 | 2870342 |  | 311 | 166 | 791 | 1708 | 3625 | 4926625 | untimed=3708138 |
+| w6 | pipe | 1 | 1 | 10000000 | 3728152 | 1.01 | 5455755 | 4934375 | 6348500 | 11857333 | 89463042 | 99010458 | journal=off fsync=1024 |
+| w6 | pipe | 2 | 1 | 10000000 | 6210839 | 0.84 | 3663067 | 2964583 | 4949958 | 11514500 | 83676959 | 102450250 | journal=off fsync=1024 |
+| w6 | pipe | 3 | 1 | 10000000 | 6969472 | 0.63 | 4445683 | 3768708 | 5402000 | 21464792 | 86079000 | 111848791 | journal=off fsync=1024 |
+| w6 | pipe | 4 | 1 | 10000000 | 6648530 | 0.45 | 5025698 | 4336834 | 6900750 | 23638500 | 67540500 | 89494042 | journal=off fsync=1024 |
+| w6 | pipe | 1 | 1 | 10000000 | 2875472 | 0.78 | 7039497 | 6299958 | 8820000 | 15583208 | 92094334 | 103534334 | journal=binary fsync=1024 |
+| w6 | pipe | 2 | 1 | 10000000 | 5517783 | 0.74 | 4077161 | 3426708 | 4690500 | 15563959 | 87523500 | 105890333 | journal=binary fsync=1024 |
+| w6 | pipe | 3 | 1 | 10000000 | 6825474 | 0.61 | 4545748 | 4057459 | 5817541 | 9560791 | 86670208 | 127530792 | journal=binary fsync=1024 |
+| w6 | pipe | 4 | 1 | 10000000 | 6162007 | 0.42 | 5381182 | 4660875 | 7514667 | 11668750 | 87706083 | 106665875 | journal=binary fsync=1024 |
+
 ## orderer-rust + orderer-cpp — 2026-10-08 (gated configuration, late session)
 
 Same machine, `COOLDOWN=30 scripts/bench.sh --n 10000000`, both

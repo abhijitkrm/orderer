@@ -63,8 +63,14 @@ jobs:
     env:
       ORDERER_RUST_DIR: ${{ github.workspace }}/impl/orderer-rust
       ORDERER_CPP_DIR: ${{ github.workspace }}/impl/orderer-cpp
+      ORDERER_JAVA_DIR: ${{ github.workspace }}/impl/orderer-java
+      ORDERER_GO_DIR: ${{ github.workspace }}/impl/orderer-go
+      ORDERER_TS_DIR: ${{ github.workspace }}/impl/orderer-ts
       MATCHER_RUST_DIR: ${{ github.workspace }}/impl/matcher-rust
       MATCHER_CPP_DIR: ${{ github.workspace }}/impl/matcher-cpp
+      MATCHER_JAVA_DIR: ${{ github.workspace }}/impl/matcher-java
+      MATCHER_GO_DIR: ${{ github.workspace }}/impl/matcher-go
+      MATCHER_TS_DIR: ${{ github.workspace }}/impl/matcher-ts
     steps:
       - uses: actions/checkout@v4
       - uses: actions/checkout@v4
@@ -87,6 +93,47 @@ jobs:
           repository: abhijitkrm/matcher-cpp
           ref: 5ddb7d2c2deb2e72b2d9a7fc09e27293bb2511b1
           path: impl/matcher-cpp
+      - uses: actions/checkout@v4
+        with:
+          repository: abhijitkrm/orderer-java
+          path: impl/orderer-java
+          token: ${{ secrets.ORDERER_REPO_TOKEN || github.token }}
+      - uses: actions/checkout@v4
+        with:
+          repository: abhijitkrm/matcher-java
+          ref: 56455ebc30c8e45634a2b62b369739a729418d57
+          path: impl/matcher-java
+      - uses: actions/checkout@v4
+        with:
+          repository: abhijitkrm/orderer-go
+          path: impl/orderer-go
+          token: ${{ secrets.ORDERER_REPO_TOKEN || github.token }}
+      - uses: actions/checkout@v4
+        with:
+          repository: abhijitkrm/matcher-go
+          ref: 53b222afd1d408a036a0594ee658dde41a6814b0
+          path: impl/matcher-go
+      - uses: actions/checkout@v4
+        with:
+          repository: abhijitkrm/orderer-ts
+          path: impl/orderer-ts
+          token: ${{ secrets.ORDERER_REPO_TOKEN || github.token }}
+      - uses: actions/checkout@v4
+        with:
+          repository: abhijitkrm/matcher-ts
+          ref: 0ef59a2b822b424fb6656b44f0406d19321b0d27
+          path: impl/matcher-ts
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: (cd impl/orderer-ts && npm ci) && (cd impl/matcher-ts && npm ci)
       - uses: dtolnay/rust-toolchain@stable
       - run: scripts/verify.sh
       - run: scripts/diffuzz.sh 4 10000

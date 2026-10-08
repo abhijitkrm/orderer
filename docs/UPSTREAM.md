@@ -91,3 +91,15 @@ command, so reported ops/s is about half of untimed throughput (W4: about
 12M timed vs about 25M untimed for matcher-rust). That's fine for latency
 percentiles, but misleading as a throughput headline. orderer's BENCH.md
 1.1 reports both and gates on untimed. matcher could add an untimed column.
+
+## 4. matcher-go `depth` allocated by the requested count (performance)
+
+**Status: fixed upstream** in matcher-go `53b222a`, with a regression test
+(`TestRestingOrdersAllocatesByLevels`). Found while porting orderer-go.
+
+`OrderBook.RestingOrders` asks each price index for every level with
+`depth(1 << 30)`, and both indexes preallocated `make([]levelDepth, 0, n)`:
+a zeroed 16 GiB slice per side, per book, per snapshot. matcher-go's own
+snapshots were only slow (the regression test took 145 s before the fix).
+orderer-go's engines snapshot in parallel, and the OS killed the process.
+The fix sizes the slice by the levels present. Snapshot output is unchanged.

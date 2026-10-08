@@ -24,9 +24,9 @@ repos and prove byte-identical behavior against `vectors/`.
 |---|---|---|
 | [orderer-rust](https://github.com/abhijitkrm/orderer-rust) | Rust | reference implementation, `orderer-spec/1.1` |
 | [orderer-cpp](https://github.com/abhijitkrm/orderer-cpp) | C++20 | header-only, `orderer-spec/1.1`, byte-identical to orderer-rust |
-| orderer-java | Java 17+ | planned |
-| orderer-go | Go | planned |
-| orderer-ts | TypeScript | planned |
+| [orderer-java](https://github.com/abhijitkrm/orderer-java) | Java 17+ | `orderer-spec/1.1`, byte-identical to orderer-rust |
+| [orderer-go](https://github.com/abhijitkrm/orderer-go) | Go 1.21+ | `orderer-spec/1.1`, byte-identical to orderer-rust |
+| [orderer-ts](https://github.com/abhijitkrm/orderer-ts) | TypeScript (Node 18+) | `worker_threads` + SharedArrayBuffer, `orderer-spec/1.1`, byte-identical to orderer-rust |
 
 Each `orderer-<lang>` embeds a vendored port of the matching `matcher-<lang>`
 core.
@@ -86,23 +86,23 @@ scripts skip any that are absent.
 
 ## Status
 
-- **orderer-spec/1.1** is tagged. orderer-rust and orderer-cpp implement
-  it. Both are byte-identical to each other and to all five matcher ports
-  under differential fuzzing (8 seeds, per-partition journals included)
-  and bounded exhaustive checking (depth 3), and pass the 63-way
-  cross-restore matrix.
-- **Performance** (Apple M1): the pipeline alone runs at 63–67M cmds/s;
-  durable, it reaches up to about 24M. The scaling gate is **not met** on
-  that machine, because of the drive's flush bandwidth and its 4
-  performance cores. [`docs/RESULTS.md`](docs/RESULTS.md) has the matrix and
-  the gap analysis.
-- **Found and fixed upstream:** an order-map deletion bug in matcher-rust
-  and matcher-cpp ([`docs/UPSTREAM.md`](docs/UPSTREAM.md)), with a
-  regression vector in `vectors/regress/`.
-- **orderer-cpp** (the first port) passes the full cross-implementation
-  matrix against orderer-rust and the five matcher ports.
-- **Next:** the orderer-java, -go and -ts ports, each against
-  `orderer-spec/1.1` (porting checklist: orderer-rust `docs/DESIGN.md` §8).
+- **orderer-spec/1.1** is tagged. All five implementations (Rust, C++,
+  Java, Go, TypeScript) implement it and are byte-identical to each other
+  and to all five matcher ports: differential fuzzing (8 seeds,
+  per-partition journals included), bounded exhaustive checking (512
+  sequences, depth 3), snapshot diffs, and a 150-way cross-restore matrix.
+- **Performance** (Apple M1, W6, one producer; [`docs/RESULTS.md`](docs/RESULTS.md)
+  has every row): Rust and C++ reach 28–30M cmds/s with journals off and
+  about 22M durable; Java 15M / 9M; Go 10M / 7M; TypeScript 7M / 7M. The
+  durable scaling gate is **not met** on that machine, because of the
+  drive's flush bandwidth and its 4 performance cores.
+- **Found and fixed upstream** ([`docs/UPSTREAM.md`](docs/UPSTREAM.md)): an
+  order-map deletion bug in matcher-rust and matcher-cpp (with a
+  regression vector in `vectors/regress/`), a per-command book
+  construction in matcher-cpp's `Engine`, and a 16 GiB-per-snapshot
+  allocation in matcher-go.
+- **Next:** the Go pipeline's GC behaviour (see RESULTS.md), and multiple
+  publishing threads for orderer-ts.
 
 ## Contributing
 

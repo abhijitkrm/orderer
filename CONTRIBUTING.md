@@ -10,7 +10,7 @@ repos, checked out as siblings, and each vendors a copy of `spec/` +
 | Layer | Lives in | Changed by |
 |---|---|---|
 | Matching semantics (books, events, snapshots) | `spec/matcher/`, `vectors/matcher/`, vendored from [matcher](https://github.com/abhijitkrm/matcher) | changing matcher first, then re-vendoring (`docs/VENDORED.md`) |
-| Pipeline contract (routing, journals, ordering, durability, harnesses) | `spec/*.md`, `vectors/{routing,pipeline,recovery,journal}/` | this repo |
+| Pipeline contract (routing, journals, ordering, durability, harnesses) | `spec/*.md`, `vectors/{routing,pipeline,recovery,regress}/` | this repo |
 
 Never edit `spec/matcher/` or `vectors/matcher/` here; `scripts/vendored.sh`
 fails if you do.

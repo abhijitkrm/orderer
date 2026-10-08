@@ -55,25 +55,38 @@ jobs:
           $OG --workload w6 --symbols 16 --n 50000 --out /tmp/a; $OG --workload w6 --symbols 16 --n 50000 --out /tmp/b
           cmp /tmp/a.run.cmd.jsonl /tmp/b.run.cmd.jsonl && cmp /tmp/a.setup.cmd.jsonl /tmp/b.setup.cmd.jsonl
 
-  # Cross-implementation proofs (scripts/*.sh) over orderer-rust and
-  # matcher-rust. Further orderer ports join as they land: check them out
-  # next to these and set ORDERER_<LANG>_DIR.
+  # Cross-implementation proofs (scripts/*.sh) over every orderer port and
+  # its matcher counterpart. Private sibling repos need secrets.ORDERER_REPO_TOKEN
+  # (read access); public ones work with the default token.
   cross-impl:
     runs-on: ubuntu-latest
     env:
       ORDERER_RUST_DIR: ${{ github.workspace }}/impl/orderer-rust
+      ORDERER_CPP_DIR: ${{ github.workspace }}/impl/orderer-cpp
       MATCHER_RUST_DIR: ${{ github.workspace }}/impl/matcher-rust
+      MATCHER_CPP_DIR: ${{ github.workspace }}/impl/matcher-cpp
     steps:
       - uses: actions/checkout@v4
       - uses: actions/checkout@v4
         with:
           repository: abhijitkrm/orderer-rust
           path: impl/orderer-rust
+          token: ${{ secrets.ORDERER_REPO_TOKEN || github.token }}
       - uses: actions/checkout@v4
         with:
           repository: abhijitkrm/matcher-rust
           ref: 71a35f46ea4658dd4da89b270cd48d0af01571b5
           path: impl/matcher-rust
+      - uses: actions/checkout@v4
+        with:
+          repository: abhijitkrm/orderer-cpp
+          path: impl/orderer-cpp
+          token: ${{ secrets.ORDERER_REPO_TOKEN || github.token }}
+      - uses: actions/checkout@v4
+        with:
+          repository: abhijitkrm/matcher-cpp
+          ref: 5ddb7d2c2deb2e72b2d9a7fc09e27293bb2511b1
+          path: impl/matcher-cpp
       - uses: dtolnay/rust-toolchain@stable
       - run: scripts/verify.sh
       - run: scripts/diffuzz.sh 4 10000

@@ -23,7 +23,7 @@ repos and prove byte-identical behavior against `vectors/`.
 | Repo | Language | Status |
 |---|---|---|
 | [orderer-rust](https://github.com/abhijitkrm/orderer-rust) | Rust | reference implementation, `orderer-spec/1.1` |
-| orderer-cpp | C++20 | planned |
+| [orderer-cpp](https://github.com/abhijitkrm/orderer-cpp) | C++20 | header-only, `orderer-spec/1.1`, byte-identical to orderer-rust |
 | orderer-java | Java 17+ | planned |
 | orderer-go | Go | planned |
 | orderer-ts | TypeScript | planned |
@@ -86,9 +86,10 @@ scripts skip any that are absent.
 
 ## Status
 
-- **orderer-spec/1.1** is tagged. orderer-rust implements it. It is
-  byte-identical to all five matcher ports under differential fuzzing (8
-  seeds) and bounded exhaustive checking (depth 3), and passes the 42-way
+- **orderer-spec/1.1** is tagged. orderer-rust and orderer-cpp implement
+  it. Both are byte-identical to each other and to all five matcher ports
+  under differential fuzzing (8 seeds, per-partition journals included)
+  and bounded exhaustive checking (depth 3), and pass the 63-way
   cross-restore matrix.
 - **Performance** (Apple M1): the pipeline alone runs at 63–67M cmds/s;
   durable, it reaches up to about 24M. The scaling gate is **not met** on
@@ -98,7 +99,9 @@ scripts skip any that are absent.
 - **Found and fixed upstream:** an order-map deletion bug in matcher-rust
   and matcher-cpp ([`docs/UPSTREAM.md`](docs/UPSTREAM.md)), with a
   regression vector in `vectors/regress/`.
-- **Next:** the orderer-cpp, -java, -go and -ts ports, each against
+- **orderer-cpp** (the first port) passes the full cross-implementation
+  matrix against orderer-rust and the five matcher ports.
+- **Next:** the orderer-java, -go and -ts ports, each against
   `orderer-spec/1.1` (porting checklist: orderer-rust `docs/DESIGN.md` §8).
 
 ## Contributing

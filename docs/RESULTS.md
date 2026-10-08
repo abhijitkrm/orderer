@@ -9,6 +9,43 @@ Pipeline latencies below come from **open-loop saturation runs**: one
 producer publishes the whole corpus as fast as the ingress accepts it. They
 measure queueing delay at full load (milliseconds), not service time.
 
+## orderer-rust + orderer-cpp — 2026-10-08 (gated configuration, late session)
+
+Same machine, `COOLDOWN=30 scripts/bench.sh --n 10000000`, both
+implementations back to back. The SSD had absorbed tens of GB of durable
+writes by this point (disk 85% full). Durable rows are lower than the
+phase-6 runs below and show 15–58 ms p99 stalls. Read them as
+disk-limited, not as a regression.
+
+| impl | workload | mode | P | ops/s | eff | p50 / p99 e2e | config |
+|---|---|---|---|---|---|---|---|
+| orderer-rust 2eae420 | w4 | core | - | 11,124,765 | | 42 / 416 ns | untimed=23,951,044 |
+| orderer-rust | w6 | core | - | 6,676,852 | | 83 / 542 ns | untimed=13,107,299 |
+| orderer-rust | w6 | pipe | 1 | 7,559,909 | 0.58 | 1.7 / 25 ms | binary, fsync 1024 |
+| orderer-rust | w6 | pipe | 2 | 17,680,590 | 0.67 | 1.0 / 5.0 ms | binary, fsync 1024 |
+| orderer-rust | w6 | pipe | 3 | 13,681,261 | 0.35 | 1.1 / 22 ms | binary, fsync 1024 |
+| orderer-rust | w6 | pipe | 4 | 15,736,269 | 0.30 | 1.3 / 14 ms | binary, fsync 1024 |
+| orderer-cpp dbda998 | w4 | core | - | 10,467,167 | | 42 / 459 ns | untimed=16,070,237 |
+| orderer-cpp | w6 | core | - | 11,854,229 | | 42 / 459 ns | untimed=23,112,485 |
+| orderer-cpp | w6 | pipe | 1 | 10,052,976 | 0.43 | 1.9 / 4.1 ms | binary, fsync 1024 |
+| orderer-cpp | w6 | pipe | 2 | 14,871,522 | 0.32 | 1.1 / 11 ms | binary, fsync 1024 |
+| orderer-cpp | w6 | pipe | 3 | 14,880,637 | 0.21 | 1.0 / 23 ms | binary, fsync 1024 |
+| orderer-cpp | w6 | pipe | 4 | 13,686,063 | 0.15 | 1.2 / 16 ms | binary, fsync 1024 |
+
+Reading it:
+
+- **Cores differ; pipelines converge.** The matcher-cpp core is about 1.8×
+  matcher-rust's on multi-symbol W6, untimed: 23.1M vs 13.1M. Rust's
+  default `HashMap` (SipHash) on every symbol lookup is the likely cause,
+  a candidate matcher-rust optimisation. On single-book W4, Rust leads (24M
+  vs 16M). With durable journals, both pipelines land at 10–18M, because
+  both are bound by the same disk. A faster core therefore shows a *lower*
+  `eff`. The gate is relative to each language's own core, by design.
+- **A4 is not met by either implementation on this machine.** The limits
+  are the same as in the phase-6 analysis below: `F_FULLFSYNC` flush
+  bandwidth, which degrades as the SSD fills over a session, and 4
+  performance cores.
+
 ## Phase 6 — orderer-rust @ 2026-10-08 cd5cd39 (gated configuration)
 
 env: Apple M1 (4 performance + 4 efficiency cores) / macOS 13.0.1 / rustc

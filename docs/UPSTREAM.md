@@ -67,7 +67,23 @@ Remaining follow-up: add `001_dense_map_churn` to matcher's shared
 suite. Today the stream lives in matcher-rust's and matcher-cpp's own
 regression tests.
 
-## 2. matcher BENCH.md ops/s include per-op clock reads
+## 2. matcher-cpp `Engine` built a whole book per command (performance)
+
+**Status: fixed upstream** in matcher-cpp `5ddb7d2`. Found while porting
+orderer-cpp.
+
+`Engine::submit` and `submit_tagged` passed `OrderBook(default_cfg_)` as a
+`try_emplace` argument. A function argument is evaluated on every call, so
+each command constructed and discarded a complete book: pool reserve, a
+2 × `max_orders` order map, and price ladders for both sides.
+`submit_tagged` also built a `std::function` per call. Results were
+unaffected; time was not. The fix looks up first, constructs only for a new
+symbol, and takes the callback as a template parameter. A 200k-command,
+8-symbol fuzz corpus through `matcherfuzz` went from 1.41 s to 0.63 s, with
+byte-identical output. matcher-cpp's published benchmarks drive `OrderBook`
+directly, so they were never affected.
+
+## 3. matcher BENCH.md ops/s include per-op clock reads
 
 matcher's protocol (`spec/matcher/BENCH.md` §2) times every command
 individually. On Apple M1 the two clock reads cost about as much as a W4

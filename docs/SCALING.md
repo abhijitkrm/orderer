@@ -51,3 +51,16 @@ threads can share the remaining cores, because they batch and back off.
 On a machine with `C` performance cores, start at `P = C − 1` and measure.
 The implementation's `docs/DESIGN.md` records its thread budget and the
 measured best P.
+
+## Measured (orderer-rust, Apple M1 4P+4E)
+
+- The pipeline alone (no matching) sustains 63–67M commands/s at P=2. The
+  ring, router and egress machinery is not the limit.
+- With matching and journals off, P=1 runs at about the core's own speed,
+  and P=2 nearly doubles it. P=3–4 flatten: the router, the producer and P
+  busy-spinning engines want P+2 performance cores.
+- With durable journals, the drive's flush bandwidth is the ceiling. Inline
+  journaling (each engine encodes its own records) beats a separate
+  journal stage when cores are scarce.
+
+Numbers and analysis: `docs/RESULTS.md`.

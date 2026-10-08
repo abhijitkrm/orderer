@@ -1,6 +1,18 @@
 # Changelog
 
-## Unreleased
+## orderer-spec/1.1
+
+- BENCH.md: the scaling gate's denominator is now the core's **untimed**
+  throughput (stricter; the per-op-timed figure overstated `eff` by about
+  1.5×). Core rows report `untimed=`.
+- docs/RESULTS.md: phase 6 matrix and A4 gap analysis. docs/UPSTREAM.md:
+  matcher order-map bug report.
+
+## orderer-spec/1
+
+- HARNESS.md §6: discovery contract (`scripts/build-harness.sh`,
+  `scripts/test.sh`). Cross-implementation scripts: verify, diffuzz,
+  exhaustive, e2e, snapdiff, bench (`scripts/lib.sh`).
 
 - Vectors: routing hash table + partition-table case, per-partition
   pipeline listings and journals (JSONL + binary) at P=1,2,4, a recovery case

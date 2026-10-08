@@ -22,7 +22,7 @@ repos and prove byte-identical behavior against `vectors/`.
 
 | Repo | Language | Status |
 |---|---|---|
-| [orderer-rust](https://github.com/abhijitkrm/orderer-rust) | Rust | reference implementation (in progress) |
+| [orderer-rust](https://github.com/abhijitkrm/orderer-rust) | Rust | reference implementation, `orderer-spec/1.1` |
 | orderer-cpp | C++20 | planned |
 | orderer-java | Java 17+ | planned |
 | orderer-go | Go | planned |
@@ -67,7 +67,7 @@ vectors/matcher/  vendored matcher golden corpus
 tools/       ordergen: matcher-compatible workloads + multi-symbol corpora + fuzz
 scripts/     verify · diffuzz · exhaustive · e2e · snapdiff · bench · vendored · manifest ·
              gen-vectors (regenerate vectors from the reference implementation)
-docs/        RESULTS.md (cross-language matrix) · SCALING.md · VENDORED.md
+docs/        RESULTS.md (cross-language matrix) · SCALING.md · VENDORED.md · UPSTREAM.md
 ```
 
 ## How parity works
@@ -83,6 +83,23 @@ Parity is checked in two directions:
 
 Implementations are checked out as siblings (`../orderer-rust`, …). The
 scripts skip any that are absent.
+
+## Status
+
+- **orderer-spec/1.1** is tagged. orderer-rust implements it. It is
+  byte-identical to all five matcher ports under differential fuzzing (8
+  seeds) and bounded exhaustive checking (depth 3), and passes the 42-way
+  cross-restore matrix.
+- **Performance** (Apple M1): the pipeline alone runs at 63–67M cmds/s;
+  durable, it reaches up to about 24M. The scaling gate is **not met** on
+  that machine, because of the drive's flush bandwidth and its 4
+  performance cores. [`docs/RESULTS.md`](docs/RESULTS.md) has the matrix and
+  the gap analysis.
+- **Found upstream:** an order-map deletion bug in matcher-rust and
+  matcher-cpp ([`docs/UPSTREAM.md`](docs/UPSTREAM.md)), with a regression
+  vector in `vectors/regress/`.
+- **Next:** the orderer-cpp, -java, -go and -ts ports, each against
+  `orderer-spec/1.1` (porting checklist: orderer-rust `docs/DESIGN.md` §8).
 
 ## Contributing
 

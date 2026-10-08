@@ -9,7 +9,7 @@ Pipeline latencies below come from **open-loop saturation runs**: one
 producer publishes the whole corpus as fast as the ingress accepts it. They
 measure queueing delay at full load (milliseconds), not service time.
 
-## Phase 6 — orderer-rust @ 2026-10-08 500300e (gated configuration)
+## Phase 6 — orderer-rust @ 2026-10-08 cd5cd39 (gated configuration)
 
 env: Apple M1 (4 performance + 4 efficiency cores) / macOS 13.0.1 / rustc
 1.98.1 (lto=fat, cgu=1, panic=abort) / W6 64 symbols, 10M run commands /

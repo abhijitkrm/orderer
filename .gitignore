@@ -1,0 +1,26 @@
+# Working plan (kept local, never committed)
+plan.md
+
+# Rust
+target/
+**/*.rs.bk
+Cargo.lock.bak
+
+# Benchmark corpora (regenerate on demand — see spec/BENCH.md, docs/RESULTS.md)
+bench/
+*.setup.cmd.jsonl
+*.run.cmd.jsonl
+
+# Runtime artifacts — journals, snapshots, fuzz corpora
+*.journal
+*.snap
+*.evt
+fuzz-*.cmd.jsonl
+
+# Tooling output
+out/
+dist/
+*.dSYM/
+
+# OS
+.DS_Store

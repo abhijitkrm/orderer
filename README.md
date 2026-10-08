@@ -59,10 +59,14 @@ spec/        PIPELINE.md (ordering, durability, control) · ROUTING.md (partitio
              JOURNAL.md (per-partition journals, binary format, snapshots) ·
              HARNESS.md (CLI contract) · BENCH.md (pipeline benchmark protocol)
 spec/matcher/     vendored matcher spec (semantics, vector schema, journal, bench)
-vectors/          orderer vectors (routing, pipeline, recovery, journal formats)
+vectors/routing/  partition-hash reference table, partition-table case
+vectors/pipeline/ per-partition listings + JSONL and binary journals at P=1,2,4
+vectors/recovery/ snapshot + tail → continuation, restored at a different P
+vectors/regress/  matcher-format golden vectors orderer adds (e.g. dense_map_churn)
 vectors/matcher/  vendored matcher golden corpus
 tools/       ordergen: matcher-compatible workloads + multi-symbol corpora + fuzz
-scripts/     verify · diffuzz · exhaustive · e2e · snapdiff · bench · vendored · manifest
+scripts/     verify · diffuzz · exhaustive · e2e · snapdiff · bench · vendored · manifest ·
+             gen-vectors (regenerate vectors from the reference implementation)
 docs/        RESULTS.md (cross-language matrix) · SCALING.md · VENDORED.md
 ```
 

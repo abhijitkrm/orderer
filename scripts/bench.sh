@@ -2,9 +2,10 @@
 # bench.sh — spec/BENCH.md matrix for every present orderer impl.
 #
 # Corpora (ordergen, not committed): W4 (matcher's), W6 (64 symbols). Rows:
-# core W4 + W6, then pipeline W6 at P=1,2,4 with the gated journal
+# core W4 + W6, then pipeline W6 at P=1,2,3,4 (3 informational) with the gated journal
 # configuration (binary command journals, fsync every 1024). eff is
-# computed against the same impl's core W6 row.
+# computed against the same impl's core W6 *untimed* throughput.
+# COOLDOWN=<s> sleeps between rows (fanless machines throttle).
 #
 #   scripts/bench.sh [--n N] [--append]     # N = W6 run commands (default 10M)
 #
@@ -35,8 +36,9 @@ for l in $(orderer_present); do
     ot "$l" orderbench bench/w4 --mode core --tag w4 2>/dev/null
     core=$(ot "$l" orderbench "bench/w6-$N" --mode core --tag w6 2>/dev/null)
     echo "$core"
-    base=$(echo "$core" | awk -F'|' '{gsub(/ /,"",$7); print $7}')
-    for P in 1 2 4; do
+    base=$(echo "$core" | sed -n 's/.*untimed=\([0-9]*\).*/\1/p')
+    for P in 1 2 3 4; do
+      sleep "${COOLDOWN:-0}"
       ot "$l" orderbench "bench/w6-$N" --mode pipe --partitions "$P" --tag w6 --baseline "$base" 2>/dev/null
     done
   } | tee -a "$OUT"

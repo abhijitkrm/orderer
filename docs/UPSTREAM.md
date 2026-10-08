@@ -2,9 +2,11 @@
 
 ## 1. `OrderMap::remove` drops live keys (matcher-rust, matcher-cpp)
 
-**Status:** fixed in orderer-rust's vendored core (`crates/orderer-core/src/ordermap.rs`).
-**Open upstream** in matcher-rust `459a22a` (`src/ordermap.rs`) and
-matcher-cpp (`include/matcher/detail/internals.hpp`). matcher-java and
+**Status: fixed upstream.** matcher-rust `71a35f4` (`src/ordermap.rs`,
+plus `tests/regress.rs`) and matcher-cpp `1285f6c`
+(`include/matcher/detail/internals.hpp`, plus `tests/regress.cpp`).
+orderer-rust vendors matcher-rust `71a35f4` verbatim. Affected: matcher-rust
+before `71a35f4` and matcher-cpp before `1285f6c`. matcher-java and
 matcher-ts implement the algorithm correctly; matcher-go uses a built-in
 map.
 
@@ -60,8 +62,10 @@ loop {
 }
 ```
 
-Suggested upstream follow-up: add `001_dense_map_churn` to matcher's
-`vectors/` (an `edge/` vector) so all five ports run it.
+Remaining follow-up: add `001_dense_map_churn` to matcher's shared
+`vectors/` (an `edge/` vector) so every port runs it through its golden
+suite. Today the stream lives in matcher-rust's and matcher-cpp's own
+regression tests.
 
 ## 2. matcher BENCH.md ops/s include per-op clock reads
 

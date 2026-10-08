@@ -95,9 +95,9 @@ scripts skip any that are absent.
   that machine, because of the drive's flush bandwidth and its 4
   performance cores. [`docs/RESULTS.md`](docs/RESULTS.md) has the matrix and
   the gap analysis.
-- **Found upstream:** an order-map deletion bug in matcher-rust and
-  matcher-cpp ([`docs/UPSTREAM.md`](docs/UPSTREAM.md)), with a regression
-  vector in `vectors/regress/`.
+- **Found and fixed upstream:** an order-map deletion bug in matcher-rust
+  and matcher-cpp ([`docs/UPSTREAM.md`](docs/UPSTREAM.md)), with a
+  regression vector in `vectors/regress/`.
 - **Next:** the orderer-cpp, -java, -go and -ts ports, each against
   `orderer-spec/1.1` (porting checklist: orderer-rust `docs/DESIGN.md` §8).
 

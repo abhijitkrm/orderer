@@ -24,3 +24,33 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: scripts/manifest.sh
+
+  ordergen:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: abhijitkrm/matcher
+          path: upstream/matcher
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build --release --manifest-path tools/ordergen/Cargo.toml
+      - run: cargo build --release --manifest-path upstream/matcher/tools/vectorgen/Cargo.toml
+      - run: cargo build --release --manifest-path upstream/matcher/tools/fuzzgen/Cargo.toml
+      - name: W1–W5 + fuzz + exhaustive byte-identical to matcher's tools
+        run: |
+          OG=tools/ordergen/target/release/ordergen
+          VG=upstream/matcher/tools/vectorgen/target/release/vectorgen
+          FG=upstream/matcher/tools/fuzzgen/target/release/fuzzgen
+          for w in w1 w2 w3 w4 w5; do
+            $VG --workload $w --n 20000 --out /tmp/vg-$w; $OG --workload $w --n 20000 --out /tmp/og-$w
+            cmp /tmp/vg-$w.setup.cmd.jsonl /tmp/og-$w.setup.cmd.jsonl
+            cmp /tmp/vg-$w.run.cmd.jsonl /tmp/og-$w.run.cmd.jsonl
+          done
+          for s in 1 2 3; do cmp <($FG --seed $s --n 5000 --symbols 8 --ids 512) <($OG --seed $s --n 5000 --symbols 8 --ids 512); done
+          $FG --exhaustive 2 --out /tmp/fe; $OG --exhaustive 2 --out /tmp/oe; diff -r /tmp/fe /tmp/oe
+      - name: W6 deterministic
+        run: |
+          OG=tools/ordergen/target/release/ordergen
+          $OG --workload w6 --symbols 16 --n 50000 --out /tmp/a; $OG --workload w6 --symbols 16 --n 50000 --out /tmp/b
+          cmp /tmp/a.run.cmd.jsonl /tmp/b.run.cmd.jsonl && cmp /tmp/a.setup.cmd.jsonl /tmp/b.setup.cmd.jsonl

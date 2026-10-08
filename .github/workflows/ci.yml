@@ -1,0 +1,26 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*", "orderer-spec/*"]
+  pull_request:
+
+jobs:
+  vendored:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # the pinned matcher commit, for the upstream-equality half of the check
+      - uses: actions/checkout@v4
+        with:
+          repository: abhijitkrm/matcher
+          path: upstream/matcher
+          fetch-depth: 0
+      - run: UPSTREAM_DIR=upstream/matcher scripts/vendored.sh
+
+  manifest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: scripts/manifest.sh

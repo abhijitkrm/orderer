@@ -54,3 +54,29 @@ jobs:
           OG=tools/ordergen/target/release/ordergen
           $OG --workload w6 --symbols 16 --n 50000 --out /tmp/a; $OG --workload w6 --symbols 16 --n 50000 --out /tmp/b
           cmp /tmp/a.run.cmd.jsonl /tmp/b.run.cmd.jsonl && cmp /tmp/a.setup.cmd.jsonl /tmp/b.setup.cmd.jsonl
+
+  # Cross-implementation proofs (scripts/*.sh) over orderer-rust and
+  # matcher-rust. Further orderer ports join as they land: check them out
+  # next to these and set ORDERER_<LANG>_DIR.
+  cross-impl:
+    runs-on: ubuntu-latest
+    env:
+      ORDERER_RUST_DIR: ${{ github.workspace }}/impl/orderer-rust
+      MATCHER_RUST_DIR: ${{ github.workspace }}/impl/matcher-rust
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: abhijitkrm/orderer-rust
+          path: impl/orderer-rust
+      - uses: actions/checkout@v4
+        with:
+          repository: abhijitkrm/matcher-rust
+          ref: 459a22a6730b740eb464854482d3819a5e6e4020
+          path: impl/matcher-rust
+      - uses: dtolnay/rust-toolchain@stable
+      - run: scripts/verify.sh
+      - run: scripts/diffuzz.sh 4 10000
+      - run: scripts/exhaustive.sh 2
+      - run: scripts/e2e.sh
+      - run: scripts/snapdiff.sh

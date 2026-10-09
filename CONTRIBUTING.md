@@ -41,12 +41,19 @@ scripts/diffuzz.sh    # differential fuzz across impls (+ matcher)
 scripts/exhaustive.sh # bounded exhaustive equivalence
 scripts/e2e.sh        # journal/snapshot/recovery loop + cross-restore matrix
 scripts/snapdiff.sh   # snapshot byte-parity vs matcher
+scripts/crash.sh      # SIGKILL durable runs: acks survive, partitions recover clean prefixes
 scripts/bench.sh      # spec/BENCH.md matrix (COOLDOWN=45 on fanless machines; never in CI)
 ```
 
 Implementations are found as siblings (`../orderer-<lang>`) through the
 `spec/HARNESS.md` §6 contract (`scripts/build-harness.sh`,
 `scripts/test.sh`); absent ones are skipped.
+
+`spec/conformance.sh` is the executable part of HARNESS.md: every orderer
+vector through a port's harness tools, byte-exact. It travels with the
+vendored `spec/`, and every port's `scripts/test.sh` runs it, so a new
+vector reaches all ports without per-port test edits. Add checks there,
+not in the ports.
 
 ## Benchmarks
 

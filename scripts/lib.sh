@@ -55,7 +55,8 @@ build_matcher() {
   local l=$1 d; d=$(matcher_dir "$l")
   mkdir -p "$MWORK"
   case $l in
-    rust) (cd "$d" && cargo build --quiet --release --bins) ;;
+    rust) (cd "$d" && cargo build --quiet --release --bins > "$MWORK/cargo.log" 2>&1) \
+            || { cat "$MWORK/cargo.log"; return 1; } ;;
     go)   for t in matcherfuzz matcherrun matcherrecover matchersnap; do
             (cd "$d" && go build -o "$MWORK/go-$t" "./cmd/$t"); done ;;
     cpp)  (cd "$d" && cmake -S . -B build -DCMAKE_BUILD_TYPE=Release >/dev/null \

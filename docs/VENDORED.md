@@ -7,7 +7,7 @@ bumping the pin below.
 
 - **upstream**: `matcher`
 - **repo**: `https://github.com/abhijitkrm/matcher`
-- **commit**: `79d1964c1b3d8723de1b91f48ddda8c6b8350660`
+- **commit**: `9c326a801d23622de8914db2a5d53d7601e417bc`
 - **paths**: `spec/matcher=spec vectors/matcher=vectors`
 
 | Local | Upstream | Contents |

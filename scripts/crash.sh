@@ -14,7 +14,12 @@
 #      prefix of the same symbol's events in an uninterrupted run.
 #
 # Rounds alternate JSONL / binary journals; every third round also takes
-# checkpoints, so some kills land mid-rotation.
+# checkpoints, so some kills land mid-rotation. The kill comes a random
+# 50–1250 ms after the journals appear.
+#
+# A SIGKILL never tears a write(), so these runs prove acks and recovery,
+# not repair: the repair paths are pinned by vectors/repair/ and each port's
+# tests. Power-loss tearing needs real hardware fault injection.
 #
 #   scripts/crash.sh [rounds] [n-cmds]     # default 6 rounds, 300k commands
 set -euo pipefail
@@ -123,11 +128,13 @@ for l in $IMPLS; do
     fmt=jsonl; flag=""; [ $((r % 2)) = 0 ] && { fmt=binary; flag=--binary; }
     ck=""; ckpt=0; [ $((r % 3)) = 0 ] && { ck="--checkpoint-every $((N / 7))"; ckpt=1; }
     d="$W/$l-$r"; mkdir -p "$d"
-    # a random kill time: 100–1500 ms
-    delay=$(awk -v s="$RANDOM" 'BEGIN { srand(s); printf "%.2f", 0.1 + rand() * 1.4 }')
+    # a random kill time 50–1250 ms after the journals appear (so slow
+    # starters like the JVM don't waste rounds)
+    delay=$(awk -v s="$RANDOM" 'BEGIN { srand(s); printf "%.2f", 0.05 + rand() * 1.2 }')
     "$(orderer_dir "$l")/harness/bin/orderrun" "$W/corpus.jsonl" --partitions $P --journal-dir "$d" $flag --durable $ck \
       > /dev/null 2> "$d.acks" &
     pid=$!
+    for _ in $(seq 1 500); do ls "$d"/cmd-* > /dev/null 2>&1 && break; sleep 0.01; done
     sleep "$delay"
     if kill -9 "$pid" 2>/dev/null; then how="killed at ${delay}s"; else how="finished before ${delay}s"; fi
     wait "$pid" 2>/dev/null || true

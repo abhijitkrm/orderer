@@ -62,10 +62,8 @@ loop {
 }
 ```
 
-Remaining follow-up: add `001_dense_map_churn` to matcher's shared
-`vectors/` (an `edge/` vector) so every port runs it through its golden
-suite. Today the stream lives in matcher-rust's and matcher-cpp's own
-regression tests.
+The stream is now matcher's shared vector `edge/042_dense_map_churn`
+(matcher `9c326a8`), so every matcher port's golden suite runs it.
 
 ## 2. matcher-cpp `Engine` built a whole book per command (performance)
 
@@ -103,3 +101,30 @@ a zeroed 16 GiB slice per side, per book, per snapshot. matcher-go's own
 snapshots were only slow (the regression test took 145 s before the fix).
 orderer-go's engines snapshot in parallel, and the OS killed the process.
 The fix sizes the slice by the levels present. Snapshot output is unchanged.
+
+## 5. matcher-go: every event escaped to the heap (performance)
+
+**Status: fixed upstream** in matcher-go `46852c8`, with
+`TestEmittingEventsDoesNotAllocate`. `emit` passed `&ev` of a local through
+the `Sink` interface, and trades and fills built `&Event{…}` literals, so
+each event was a heap allocation (5 per new/match/cancel round). The book
+now delivers a pointer to one reused `Event`; `Sink` documents that it is
+valid only during the call. In orderer-go the hot path went from 77 bytes
+per command to zero, and the pipeline at P=1 (journals off) from 2.6M to
+8.9M commands/s on an M1.
+
+## 6. matcher-rust: SipHash on every symbol lookup (performance)
+
+**Status: fixed upstream** in matcher-rust `8c4d05e`. `Engine` kept books in
+a `HashMap` with std's default SipHash, a keyed cryptographic hash, on every
+`submit`. Symbols are not attacker-chosen keys. A one-multiply hasher for
+`u32` symbols doubled multi-symbol core throughput (W6 untimed: ~15M to
+~30M ops/s).
+
+## 7. matcher-go: `cmd/matcherbench` was never committed
+
+**Status: fixed upstream** in matcher-go `14a8456`. The `.gitignore` rule
+`matcherbench`, meant for the built binary, also matched the
+`cmd/matcherbench/` source directory, so clones lacked the bench tool and
+the spec repo's CI failed building it. Binary rules are now anchored
+(`/matcherbench`).

@@ -86,23 +86,24 @@ scripts skip any that are absent.
 
 ## Status
 
-- **orderer-spec/1.1** is tagged. All five implementations (Rust, C++,
+- **orderer-spec/1.2** is tagged. All five implementations (Rust, C++,
   Java, Go, TypeScript) implement it and are byte-identical to each other
-  and to all five matcher ports: differential fuzzing (8 seeds,
-  per-partition journals included), bounded exhaustive checking (512
-  sequences, depth 3), snapshot diffs, and a 150-way cross-restore matrix.
-- **Performance** (Apple M1, W6, one producer; [`docs/RESULTS.md`](docs/RESULTS.md)
-  has every row): Rust and C++ reach 28–30M cmds/s with journals off and
-  about 22M durable; Java 15M / 9M; Go 10M / 7M; TypeScript 7M / 7M. The
-  durable scaling gate is **not met** on that machine, because of the
-  drive's flush bandwidth and its 4 performance cores.
-- **Found and fixed upstream** ([`docs/UPSTREAM.md`](docs/UPSTREAM.md)): an
-  order-map deletion bug in matcher-rust and matcher-cpp (with a
-  regression vector in `vectors/regress/`), a per-command book
-  construction in matcher-cpp's `Engine`, and a 16 GiB-per-snapshot
-  allocation in matcher-go.
-- **Next:** the Go pipeline's GC behaviour (see RESULTS.md), and multiple
-  publishing threads for orderer-ts.
+  and to all five matcher ports: differential fuzzing (per-partition
+  journals included), bounded exhaustive checking, snapshot diffs, a
+  150-way cross-restore matrix, and the shared `spec/conformance.sh`.
+- **1.2 adds durability features**: CRC-32C on every binary journal record,
+  crash repair for torn tails, and checkpoints that rotate journals onto
+  segments and delete what a durable snapshot covers (manual or
+  automatic). `scripts/crash.sh` SIGKILLs durable runs of every port and
+  checks that every acknowledged command survives.
+- **Every port exposes `stats()`**: ring depths, counters, durability
+  watermarks and fsync timings, with Prometheus text output.
+- **Performance** ([`docs/RESULTS.md`](docs/RESULTS.md)): see the latest
+  cross-language table. The durable scaling gate is **not met** on the
+  development M1: an `F_FULLFSYNC` there averages ~12 ms.
+- **Found and fixed upstream** ([`docs/UPSTREAM.md`](docs/UPSTREAM.md)):
+  bugs and performance problems in matcher-rust, matcher-cpp and matcher-go,
+  each with a regression test or vector.
 
 ## Contributing
 

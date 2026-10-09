@@ -5,6 +5,9 @@ on:
     branches: [main]
     tags: ["v*", "orderer-spec/*"]
   pull_request:
+  schedule:
+    - cron: "17 3 * * *" # nightly: the long proofs (8 seeds × 20k, exhaustive depth 3)
+  workflow_dispatch:
 
 jobs:
   vendored:
@@ -111,7 +114,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: abhijitkrm/matcher-go
-          ref: 53b222afd1d408a036a0594ee658dde41a6814b0
+          ref: 14a84560da1cdf20cb4d8a448f9fb757accd9185
           path: impl/matcher-go
       - uses: actions/checkout@v4
         with:
@@ -136,7 +139,7 @@ jobs:
       - run: (cd impl/orderer-ts && npm ci) && (cd impl/matcher-ts && npm ci)
       - uses: dtolnay/rust-toolchain@stable
       - run: scripts/verify.sh
-      - run: scripts/diffuzz.sh 4 10000
-      - run: scripts/exhaustive.sh 2
+      - run: scripts/diffuzz.sh ${{ github.event_name == 'schedule' && '8 20000' || '4 10000' }}
+      - run: scripts/exhaustive.sh ${{ github.event_name == 'schedule' && '3' || '2' }}
       - run: scripts/e2e.sh
       - run: scripts/snapdiff.sh

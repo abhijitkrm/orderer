@@ -55,8 +55,8 @@ build_matcher() {
   local l=$1 d; d=$(matcher_dir "$l")
   mkdir -p "$MWORK"
   case $l in
-    rust) (cd "$d" && cargo build --quiet --release --bins 2>/dev/null) ;;
-    go)   for t in matcherfuzz matcherrun matcherrecover matchersnap matcherbench; do
+    rust) (cd "$d" && cargo build --quiet --release --bins) ;;
+    go)   for t in matcherfuzz matcherrun matcherrecover matchersnap; do
             (cd "$d" && go build -o "$MWORK/go-$t" "./cmd/$t"); done ;;
     cpp)  (cd "$d" && cmake -S . -B build -DCMAKE_BUILD_TYPE=Release >/dev/null \
             && cmake --build build --target matcherfuzz matcherrun matcherrecover matchersnap matcherbench -j >/dev/null) ;;
@@ -89,7 +89,8 @@ mbench() {
   local l=$1 d; shift; d=$(matcher_dir "$l")
   case $l in
     rust) "$d/target/release/matcher_bench" "$@" ;;
-    go)   "$MWORK/go-matcherbench" "$@" ;;
+    go)   [ -x "$MWORK/go-matcherbench" ] || (cd "$d" && go build -o "$MWORK/go-matcherbench" ./cmd/matcherbench)
+          "$MWORK/go-matcherbench" "$@" ;;
     cpp)  "$d/build/matcherbench" "$@" ;;
     ts)   node "$d/dist/bench/matcherbench.js" "$@" ;;
     java) java -cp "$d/out" MatcherBench "$@" ;;

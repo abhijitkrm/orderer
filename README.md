@@ -98,9 +98,11 @@ scripts skip any that are absent.
   checks that every acknowledged command survives.
 - **Every port exposes `stats()`**: ring depths, counters, durability
   watermarks and fsync timings, with Prometheus text output.
-- **Performance** ([`docs/RESULTS.md`](docs/RESULTS.md)): see the latest
-  cross-language table. The durable scaling gate is **not met** on the
-  development M1: an `F_FULLFSYNC` there averages ~12 ms.
+- **Performance** (Apple M1, W6, one producer; [`docs/RESULTS.md`](docs/RESULTS.md)):
+  Rust and C++ reach about 32M commands/s with journals off and 18–21M
+  durable; Java 20M / 15M; Go 13M / 14M; TypeScript 8M / 6M. The durable
+  scaling gate is **not met** on that machine: an `F_FULLFSYNC` there
+  averages ~12 ms. One open issue: orderer-go at P=4 with fsync.
 - **Found and fixed upstream** ([`docs/UPSTREAM.md`](docs/UPSTREAM.md)):
   bugs and performance problems in matcher-rust, matcher-cpp and matcher-go,
   each with a regression test or vector.

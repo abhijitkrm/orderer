@@ -64,3 +64,39 @@ measured best P.
   journal stage when cores are scarce.
 
 Numbers and analysis: `docs/RESULTS.md`.
+
+## Running the matrix on a Linux server
+
+Every number in `docs/RESULTS.md` so far comes from one Apple M1 laptop:
+4 performance cores, and an SSD on which `F_FULLFSYNC` averages about
+12 ms (`orderbench --stats` reports it). Both limit the durable rows, so
+the scaling gate there says more about the laptop than about orderer.
+Representative numbers need a server. The scripts run unchanged on Linux
+(CI already builds and tests every port on Ubuntu).
+
+What to use:
+
+- At least 2P + 3 physical cores free for the run (producer, router, P
+  engines, egress, journal I/O), on one NUMA node.
+- An NVMe drive with power-loss protection. Journals sync with
+  `fdatasync` on Linux; on such drives a flush takes tens of microseconds,
+  not milliseconds.
+- The performance governor, turbo off for stable results, and nothing else
+  running.
+
+How to run it:
+
+```bash
+# siblings: orderer, orderer-{rust,cpp,java,go,ts}, matcher-{rust,go,cpp,ts,java}
+sudo cpupower frequency-set -g performance
+cd orderer
+scripts/bench.sh --n 10000000                 # all present ports, isolated + integrated
+# one port, confined to chosen cores, with fsync timing:
+taskset -c 2-9 ../orderer-rust/harness/bin/orderbench bench/w6-10000000 --mode pipe --partitions 4 --stats
+```
+
+orderer does not pin threads itself on Linux (orderer-rust's `affinity`
+feature only sets macOS QoS hints), so confine the process with `taskset`
+or cgroups. Record the CPU model, core count, kernel, drive model and filesystem with
+the rows (CONTRIBUTING.md). To isolate the drive's effect, compare
+`--journal off` with the durable rows, and read fsync timing from `--stats`.

@@ -128,3 +128,15 @@ a `HashMap` with std's default SipHash, a keyed cryptographic hash, on every
 `cmd/matcherbench/` source directory, so clones lacked the bench tool and
 the spec repo's CI failed building it. Binary rules are now anchored
 (`/matcherbench`).
+
+## 8. Top-of-book rescan was linear on a nearly empty ladder (all five ports)
+
+**Status: fixed upstream** in matcher `06b5403` (BENCH W3-drain row) and
+matcher-rust `8657dc7`, matcher-cpp `55091ea`, matcher-java `20e563b`,
+matcher-go `81542be`, matcher-ts `223341e`. When a side's best level
+emptied, the ladder searched the occupancy bitmap one word at a time; on
+the bench's 1M-tick ladder, emptying a side's last level cost about 7,800
+words. W3 run for 1M ops drains the book and showed it (0.3–1.2M ops/s).
+A summary bitmap and an empty-side shortcut bring it to 4.8–15.3M with
+output unchanged. In orderer, a symbol whose book empties (a quiet
+instrument whose last order is cancelled) hit this on every such cancel.

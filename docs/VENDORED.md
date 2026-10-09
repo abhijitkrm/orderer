@@ -7,13 +7,13 @@ bumping the pin below.
 
 - **upstream**: `matcher`
 - **repo**: `https://github.com/abhijitkrm/matcher`
-- **commit**: `9c326a801d23622de8914db2a5d53d7601e417bc`
+- **commit**: `06b54033797c5b597161ec6ff3f0993d207c7113`
 - **paths**: `spec/matcher=spec vectors/matcher=vectors`
 
 | Local | Upstream | Contents |
 |---|---|---|
 | `spec/matcher/` | `spec/` | SPEC.md (semantics), SCHEMA.md (vector format), BENCH.md (core bench protocol), JOURNAL.md (journal + `matcher-snap/1`) |
-| `vectors/matcher/` | `vectors/` | 41 golden vectors (core, tif, edge, engine) + their manifest |
+| `vectors/matcher/` | `vectors/` | 43 golden vectors (core, tif, edge, engine) + their manifest |
 
 `docs/VENDORED.sha256` holds the checksum of every vendored file.
 `scripts/vendored.sh` verifies the local copy against it and, when

@@ -81,6 +81,52 @@ for P in 1 3; do
   "$BIN/orderrecover" "$d/prefix.snap" "$d/tail.cmd.jsonl" --partitions "$P" > "$d/recov.P$P.evt"
 done
 
+# ---- checkpoint (1.2): segments rotated at deterministic cuts -----------------
+for input in multisymbol fuzz_s11; do
+  src="$V/pipeline/$input.cmd.jsonl"
+  n=$(($(wc -l < "$src" | tr -d ' ') - 1))
+  K=$((n * 2 / 5))
+  d="$V/checkpoint/$input"
+  rm -rf "$d"; mkdir -p "$d"
+  echo "$K" > "$d/K"
+  for enc in jsonl binary; do
+    flag=""; [ $enc = binary ] && flag=--binary
+    "$BIN/orderrun" "$src" --partitions 2 --journal-dir "$d/$enc" $flag --checkpoint-every "$K" > "$d/listing.$enc.evt"
+    cmp -s "$d/listing.$enc.evt" "$V/pipeline/$input/P2/listing.evt" || { echo "checkpoints changed the listing!"; exit 1; }
+    rm "$d/listing.$enc.evt"
+    "$BIN/orderrecover" --journal-dir "$d/$enc" $flag --partitions 2 > "$d/recov.$enc.evt"
+  done
+  cmp -s "$d/recov.jsonl.evt" "$d/recov.binary.evt" || { echo "recovery depends on journal format!"; exit 1; }
+  mv "$d/recov.jsonl.evt" "$d/recov.evt"; rm "$d/recov.binary.evt"
+done
+
+# ---- repair (1.2): torn tails a crash can leave -----------------------------
+# Inputs: fuzz_s11's P=2 journals with partition 0's last record cut short
+# and (binary) partition 1's last record zeroed. Expected: what
+# `orderrecover --repair` prints, and the repaired files.
+d="$V/repair/fuzz_s11"
+rm -rf "$d"; mkdir -p "$d"
+for enc in jsonl binary; do
+  flag=""; ext=journal; [ $enc = binary ] && { flag=--binary; ext=bin; }
+  cp -R "$V/pipeline/fuzz_s11/P2/$enc" "$d/$enc.torn"
+  f0="$d/$enc.torn/cmd-0.$ext"
+  python3 - "$f0" <<'PY'
+import sys
+p = sys.argv[1]; b = open(p, 'rb').read(); open(p, 'wb').write(b[:-5])
+PY
+  if [ $enc = binary ]; then
+    python3 - "$d/$enc.torn/cmd-1.bin" <<'PY'
+import sys
+p = sys.argv[1]; b = bytearray(open(p, 'rb').read()); b[-48:] = bytes(48); open(p, 'wb').write(bytes(b))
+PY
+  fi
+  cp -R "$d/$enc.torn" "$d/$enc.repaired"
+  "$BIN/orderrecover" --journal-dir "$d/$enc.repaired" $flag --repair --partitions 2 > "$d/recov.$enc.evt" 2>/dev/null
+done
+
+# ---- compat: version-1 binary journals (read-only; committed as-is) ---------
+[ -d "$V/compat/v1/fuzz_s11_P2/binary" ] || { echo "missing vectors/compat/v1"; exit 1; }
+
 # ---- manifest ----------------------------------------------------------------
 python3 - "$V" <<'EOF'
 import json, os, sys
@@ -114,6 +160,17 @@ for inp in ["multisymbol", "fuzz_s11"]:
         "desc": "orderrun listing + per-partition JSONL and binary journals at P=1,2,4",
         "input": "pipeline/%s.cmd.jsonl" % inp, "partitions": [1, 2, 4],
         "files": files("pipeline/%s.cmd.jsonl" % inp, "pipeline/" + inp)})
+for inp in ["multisymbol", "fuzz_s11"]:
+    vectors.append({"name": "checkpoint/" + inp, "kind": "checkpoint",
+        "desc": "JOURNAL.md 1.2 §6: orderrun --checkpoint-every K at P=2 (listing = pipeline/<input>/P2); journal dirs hold the last checkpoint + its segments; recov.evt = orderrecover from the checkpoint",
+        "input": "pipeline/%s.cmd.jsonl" % inp, "partitions": 2,
+        "files": files("checkpoint/" + inp)})
+vectors.append({"name": "repair/fuzz_s11", "kind": "repair",
+    "desc": "JOURNAL.md 1.2 §5.1: <enc>.torn = P=2 journals with torn tails; orderrecover --repair --partitions 2 on a copy leaves <enc>.repaired and prints recov.<enc>.evt; strict recovery of .torn exits 2",
+    "partitions": 2, "files": files("repair/fuzz_s11")})
+vectors.append({"name": "compat/v1/fuzz_s11_P2", "kind": "compat",
+    "desc": "version-1 binary journals (orderer-spec/1.1 writers); 1.2 readers recover them: orderrecover --binary --partitions 2 matches listing.evt per symbol",
+    "partitions": 2, "files": files("compat/v1/fuzz_s11_P2")})
 vectors.append({"name": "recovery/fuzz_s11", "kind": "recovery",
     "desc": "orderrun prefix --snap at P=3, then orderrecover snap+tail at P=1 and P=3",
     "snapshot_partitions": 3, "partitions": [1, 3],

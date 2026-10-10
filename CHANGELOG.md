@@ -8,8 +8,13 @@
   a checkpoint and writing its header left one, and every implementation's
   `--repair` refused the directory. Found by `scripts/crash.sh`, whose
   checkpoint rounds now rotate every N/30 commands to exercise it.
-- Vector `repair/checkpoint_fuzz_s11` (partial, empty and zero-filled
-  headers); `spec/conformance.sh` runs every repair vector.
+- JOURNAL.md §5.1: binary repair cuts every final record that is entirely
+  zero bytes before the one-record checksum rule. On macOS, SIGKILL during
+  a large write can leave a file extended by zeros where the data never
+  landed (crash.sh found whole 256 KB chunks of them).
+- Vectors `repair/checkpoint_fuzz_s11` (partial, empty and zero-filled
+  headers) and `repair/zerofill_fuzz_s11` (zero records, a half-filled
+  record, JSONL zero bytes); `spec/conformance.sh` runs every repair vector.
 - Vendored matcher `06b5403` (BENCH.md W3-drain row).
 
 ## orderer-spec/1.2

@@ -96,10 +96,12 @@ scripts skip any that are absent.
   segments and delete what a durable snapshot covers (manual or
   automatic). `scripts/crash.sh` SIGKILLs durable runs of every port and
   checks that every acknowledged command survives.
-- **1.3 closes a repair gap**: a crash between creating a checkpoint's new
-  segment and writing its header left a segment no implementation would
-  repair. `--repair` now deletes such a segment (it cannot hold a record);
-  `vectors/repair/checkpoint_fuzz_s11` pins it.
+- **1.3 closes two repair gaps** that `scripts/crash.sh` found: a segment
+  created at a checkpoint whose header never arrived, and binary tails of
+  all-zero records (SIGKILL during a large write on macOS can extend a
+  file with zeros). Every implementation's `--repair` refused both; now it
+  deletes the first and cuts the second. Vectors `repair/checkpoint_fuzz_s11`
+  and `repair/zerofill_fuzz_s11` pin them.
 - **Every port exposes `stats()`**: ring depths, counters, durability
   watermarks and fsync timings, with Prometheus text output.
 - **Performance** (Apple M1, W6, one producer; [`docs/RESULTS.md`](docs/RESULTS.md)):

@@ -12,8 +12,13 @@
   zero bytes before the one-record checksum rule. On macOS, SIGKILL during
   a large write can leave a file extended by zeros where the data never
   landed (crash.sh found whole 256 KB chunks of them).
+- JOURNAL.md §5.1: when the last segment holds no records, repair also
+  repairs the segment before it (and so on). Writers create segment `N`
+  while still writing the previous one's end; §6 step 2 now says so
+  instead of promising the reverse.
 - Vectors `repair/checkpoint_fuzz_s11` (partial, empty and zero-filled
-  headers) and `repair/zerofill_fuzz_s11` (zero records, a half-filled
+  headers), `repair/rotation_fuzz_s11` (torn segments behind header-only
+  ones) and `repair/zerofill_fuzz_s11` (zero records, a half-filled
   record, JSONL zero bytes); `spec/conformance.sh` runs every repair vector.
 - Vendored matcher `06b5403` (BENCH.md W3-drain row).
 

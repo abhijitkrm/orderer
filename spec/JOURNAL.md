@@ -259,6 +259,11 @@ segment** of each journal file family:
   the segment before it as the last segment. A segment 0 like this is
   still corruption: its pipeline never journaled a command, so nothing
   in it was acknowledged.
+- (1.3) If the last segment then holds no records, the segment before it
+  is repaired too, and so on back to the first segment that holds one: a
+  writer may create segment `N` while it is still writing the end of the
+  previous segment (§6 step 2), so a crash can tear a segment that is no
+  longer the last.
 
 Repair truncates the file to its last valid record, in place, and reports
 how many bytes it removed (a deleted segment: its whole size). Every
@@ -271,8 +276,10 @@ A checkpoint bounds recovery time and disk use.
 
 1. Take a snapshot (§4) with cut `N`, through the rings, so every partition
    cuts at the same point of the ingress order.
-2. At that same control message, every partition's journal writers finish
-   their current segments (written and synced) and open segment `N` (§1).
+2. At that same control message, every partition's journal writers open
+   segment `N` (§1) and finish their current segments: written and
+   synced, before any record goes to segment `N`. Segment `N` itself (its
+   header) may appear while the previous segment is still being written.
 3. Write the snapshot body and sidecar durably: write to temporary names,
    sync, rename, sync the directory.
 4. Only then delete every segment whose start is below `N`, and older

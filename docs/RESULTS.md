@@ -45,9 +45,12 @@ Reading it:
   journal goroutines returning from `F_FULLFSYNC` waited for a P and synced
   in tiny groups (about 550 fsyncs per run instead of about 100). BusySpin
   now yields every 16K idle spins, and P=4 durable runs at about 11M
-  (three runs: 10.0, 11.7, 11.3M; before: 4.6, 4.0, 4.7M). Run-to-run
-  spread elsewhere in Go's pipeline rows remains (for example 8–12M at P=4
-  with journals off).
+  (three runs: 10.0, 11.7, 11.3M; before: 4.6, 4.0, 4.7M). The remaining
+  run-to-run spread (8–12M at P=4 with journals off) came from locking each
+  pipeline goroutine to an OS thread: a locked goroutine that yields hands
+  its P away and back. orderer-go 411e0ab stops locking: P=4 journal-off
+  16.0–17.2M across six runs (was 8.1–16.9M), P=2 10.5–13.3M (was
+  5.8–8.6M). Rust on the same machine varies about ±3%.
 - **TypeScript** is bounded by its owner thread (egress decoding and plugs).
   Extra worker producers (`--producers N`, new in 0.2.0) do not raise it.
 - **Durability is disk-bound here.** `orderbench --stats` (orderer-rust)

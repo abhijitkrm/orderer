@@ -102,7 +102,7 @@ scripts skip any that are absent.
   Rust and C++ reach about 32M commands/s with journals off and 18–21M
   durable; Java 20M / 15M; Go 13M / 14M; TypeScript 8M / 6M. The durable
   scaling gate is **not met** on that machine: an `F_FULLFSYNC` there
-  averages ~12 ms. One open issue: orderer-go at P=4 with fsync.
+  averages ~12 ms.
 - **Found and fixed upstream** ([`docs/UPSTREAM.md`](docs/UPSTREAM.md)):
   bugs and performance problems in matcher-rust, matcher-cpp and matcher-go,
   each with a regression test or vector.

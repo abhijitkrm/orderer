@@ -39,8 +39,15 @@ Reading it:
   between 4.9M and 8.6M across runs, and P=4 durable stays near 5M while P=3
   durable reaches 13.6M. The P=4 drop needs fsync: the same row with
   journals but no fsync runs at 14.2M, and raising `GOMAXPROCS` to 16 does
-  not help. **Open issue:** profile orderer-go's journal I/O goroutines
-  under concurrent `F_FULLFSYNC`.
+  not help. **Fixed in orderer-go 85db1b0:** at P=4 the busy-spinning
+  goroutines (router, four engines, egress, producer) held 7 of the 8 Ps,
+  and a goroutine that never yields keeps its P for up to 10 ms. The
+  journal goroutines returning from `F_FULLFSYNC` waited for a P and synced
+  in tiny groups (about 550 fsyncs per run instead of about 100). BusySpin
+  now yields every 16K idle spins, and P=4 durable runs at about 11M
+  (three runs: 10.0, 11.7, 11.3M; before: 4.6, 4.0, 4.7M). Run-to-run
+  spread elsewhere in Go's pipeline rows remains (for example 8–12M at P=4
+  with journals off).
 - **TypeScript** is bounded by its owner thread (egress decoding and plugs).
   Extra worker producers (`--producers N`, new in 0.2.0) do not raise it.
 - **Durability is disk-bound here.** `orderbench --stats` (orderer-rust)

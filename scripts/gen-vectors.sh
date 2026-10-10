@@ -124,6 +124,29 @@ PY
   "$BIN/orderrecover" --journal-dir "$d/$enc.repaired" $flag --repair --partitions 2 > "$d/recov.$enc.evt" 2>/dev/null
 done
 
+# ---- repair (1.3): a segment created at a checkpoint without its header -----
+# Inputs: checkpoint/fuzz_s11's journal dirs plus the next checkpoint's
+# segments, torn before their headers reached the file: partition 0's
+# command segment holds 10 bytes of header, partition 1's is empty, and
+# partition 0's event segment is zero-filled. Expected: --repair deletes
+# exactly those, leaving the checkpoint dir as it was.
+d="$V/repair/checkpoint_fuzz_s11"
+rm -rf "$d"; mkdir -p "$d"
+# the next checkpoint's cut: the last one's plus K
+cut=$(ls "$V/checkpoint/fuzz_s11/jsonl" | sed -n 's/^checkpoint-\([0-9]*\)\.snap$/\1/p' | sort -n | tail -1)
+M=$(( cut + $(cat "$V/checkpoint/fuzz_s11/K") ))
+for enc in jsonl binary; do
+  ext=journal; [ $enc = binary ] && ext=bin
+  src="$V/checkpoint/fuzz_s11/$enc"
+  cp -R "$src" "$d/$enc.torn"
+  cp -R "$src" "$d/$enc.repaired"
+  head -c 10 "$(ls "$src"/cmd-0.*.$ext | head -1)" > "$d/$enc.torn/cmd-0.$M.$ext"
+  : > "$d/$enc.torn/cmd-1.$M.$ext"
+  n=20; [ $enc = binary ] && n=64
+  head -c $n /dev/zero > "$d/$enc.torn/evt-0.$M.$ext"
+  cp "$V/checkpoint/fuzz_s11/recov.evt" "$d/recov.$enc.evt"
+done
+
 # ---- compat: version-1 binary journals (read-only; committed as-is) ---------
 [ -d "$V/compat/v1/fuzz_s11_P2/binary" ] || { echo "missing vectors/compat/v1"; exit 1; }
 
@@ -168,6 +191,9 @@ for inp in ["multisymbol", "fuzz_s11"]:
 vectors.append({"name": "repair/fuzz_s11", "kind": "repair",
     "desc": "JOURNAL.md 1.2 §5.1: <enc>.torn = P=2 journals with torn tails; orderrecover --repair --partitions 2 on a copy leaves <enc>.repaired and prints recov.<enc>.evt; strict recovery of .torn exits 2",
     "partitions": 2, "files": files("repair/fuzz_s11")})
+vectors.append({"name": "repair/checkpoint_fuzz_s11", "kind": "repair",
+    "desc": "JOURNAL.md 1.3 §5.1: <enc>.torn = checkpoint/fuzz_s11 plus next-checkpoint segments without a usable header (partial, empty, zero-filled); orderrecover --repair --partitions 2 deletes them, leaving <enc>.repaired, and prints recov.<enc>.evt; strict recovery of .torn exits 2",
+    "partitions": 2, "files": files("repair/checkpoint_fuzz_s11")})
 vectors.append({"name": "compat/v1/fuzz_s11_P2", "kind": "compat",
     "desc": "version-1 binary journals (orderer-spec/1.1 writers); 1.2 readers recover them: orderrecover --binary --partitions 2 matches listing.evt per symbol",
     "partitions": 2, "files": files("compat/v1/fuzz_s11_P2")})

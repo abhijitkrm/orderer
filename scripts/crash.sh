@@ -126,7 +126,7 @@ fail=0
 for l in $IMPLS; do
   for r in $(seq 1 "$ROUNDS"); do
     fmt=jsonl; flag=""; [ $((r % 2)) = 0 ] && { fmt=binary; flag=--binary; }
-    ck=""; ckpt=0; [ $((r % 3)) = 0 ] && { ck="--checkpoint-every $((N / 7))"; ckpt=1; }
+    ck=""; ckpt=0; [ $((r % 3)) = 0 ] && { ck="--checkpoint-every $((N / 30))"; ckpt=1; }
     d="$W/$l-$r"; mkdir -p "$d"
     # a random kill time 50–1250 ms after the journals appear (so slow
     # starters like the JVM don't waste rounds)

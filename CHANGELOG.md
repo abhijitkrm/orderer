@@ -1,5 +1,27 @@
 # Changelog
 
+## orderer-spec/1.3
+
+- JOURNAL.md §5.1: repair deletes a segment that cannot hold a record and
+  whose start is above 0 (JSONL with no newline; binary no longer than the
+  header with an invalid header). A crash between creating segment `N` at
+  a checkpoint and writing its header left one, and every implementation's
+  `--repair` refused the directory. Found by `scripts/crash.sh`, whose
+  checkpoint rounds now rotate every N/30 commands to exercise it.
+- Vector `repair/checkpoint_fuzz_s11` (partial, empty and zero-filled
+  headers); `spec/conformance.sh` runs every repair vector.
+- Vendored matcher `06b5403` (BENCH.md W3-drain row).
+
+## orderer-spec/1.2
+
+- JOURNAL.md: binary journal version 2 (CRC-32C per record), repair mode
+  for torn tails (§5.1), segments and checkpoints (§6).
+- HARNESS.md: `orderrun --checkpoint-every K` and `--durable`,
+  `orderrecover --repair`.
+- `spec/conformance.sh`, the shared harness test every implementation
+  runs; `scripts/crash.sh`, SIGKILL durability test.
+- Vectors: `checkpoint/`, `repair/fuzz_s11`, `compat/v1`.
+
 ## orderer-spec/1.1
 
 - BENCH.md: the scaling gate's denominator is now the core's **untimed**

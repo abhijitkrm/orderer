@@ -22,11 +22,11 @@ repos and prove byte-identical behavior against `vectors/`.
 
 | Repo | Language | Status |
 |---|---|---|
-| [orderer-rust](https://github.com/abhijitkrm/orderer-rust) | Rust | reference implementation, `orderer-spec/1.1` |
-| [orderer-cpp](https://github.com/abhijitkrm/orderer-cpp) | C++20 | header-only, `orderer-spec/1.1`, byte-identical to orderer-rust |
-| [orderer-java](https://github.com/abhijitkrm/orderer-java) | Java 17+ | `orderer-spec/1.1`, byte-identical to orderer-rust |
-| [orderer-go](https://github.com/abhijitkrm/orderer-go) | Go 1.21+ | `orderer-spec/1.1`, byte-identical to orderer-rust |
-| [orderer-ts](https://github.com/abhijitkrm/orderer-ts) | TypeScript (Node 18+) | `worker_threads` + SharedArrayBuffer, `orderer-spec/1.1`, byte-identical to orderer-rust |
+| [orderer-rust](https://github.com/abhijitkrm/orderer-rust) | Rust | reference implementation, `orderer-spec/1.3` |
+| [orderer-cpp](https://github.com/abhijitkrm/orderer-cpp) | C++20 | header-only, `orderer-spec/1.3`, byte-identical to orderer-rust |
+| [orderer-java](https://github.com/abhijitkrm/orderer-java) | Java 17+ | `orderer-spec/1.3`, byte-identical to orderer-rust |
+| [orderer-go](https://github.com/abhijitkrm/orderer-go) | Go 1.21+ | `orderer-spec/1.3`, byte-identical to orderer-rust |
+| [orderer-ts](https://github.com/abhijitkrm/orderer-ts) | TypeScript (Node 18+) | `worker_threads` + SharedArrayBuffer, `orderer-spec/1.3`, byte-identical to orderer-rust |
 
 Each `orderer-<lang>` embeds a vendored port of the matching `matcher-<lang>`
 core.
@@ -86,7 +86,7 @@ scripts skip any that are absent.
 
 ## Status
 
-- **orderer-spec/1.2** is tagged. All five implementations (Rust, C++,
+- **orderer-spec/1.3** is tagged. All five implementations (Rust, C++,
   Java, Go, TypeScript) implement it and are byte-identical to each other
   and to all five matcher ports: differential fuzzing (per-partition
   journals included), bounded exhaustive checking, snapshot diffs, a
@@ -96,6 +96,10 @@ scripts skip any that are absent.
   segments and delete what a durable snapshot covers (manual or
   automatic). `scripts/crash.sh` SIGKILLs durable runs of every port and
   checks that every acknowledged command survives.
+- **1.3 closes a repair gap**: a crash between creating a checkpoint's new
+  segment and writing its header left a segment no implementation would
+  repair. `--repair` now deletes such a segment (it cannot hold a record);
+  `vectors/repair/checkpoint_fuzz_s11` pins it.
 - **Every port exposes `stats()`**: ring depths, counters, durability
   watermarks and fsync timings, with Prometheus text output.
 - **Performance** (Apple M1, W6, one producer; [`docs/RESULTS.md`](docs/RESULTS.md)):

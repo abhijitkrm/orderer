@@ -1,4 +1,4 @@
-# JOURNAL — orderer journals, snapshots and recovery v1.2
+# JOURNAL — orderer journals, snapshots and recovery v1.3
 
 Extends matcher's `spec/matcher/JOURNAL.md`. Command and event lines,
 snapshot format and determinism argument are matcher's. This document adds
@@ -11,6 +11,7 @@ what the pipeline needs:
 - the recovery procedure
 - (1.2) per-record checksums, crash repair, and segments rotated at
   checkpoints
+- (1.3) repair deletes a segment a crash left without a usable header
 
 Vectors: `vectors/pipeline/`, `vectors/journal/`, `vectors/recovery/`.
 
@@ -242,9 +243,18 @@ segment** of each journal file family:
 - JSONL: a final line without a newline is cut off.
 - Binary: a partial final record is cut off. Then, in version 2, a final
   complete record whose checksum fails is cut off too (one record at most).
+- (1.3) A segment that cannot hold a record is deleted, if its start is
+  above 0. That is a JSONL segment with no newline at all, or a binary
+  segment no longer than the 64-byte header whose header is invalid
+  (empty, partial or zero-filled). A crash between creating segment `N`
+  at a checkpoint (§6 step 2) and its header reaching the file leaves
+  one. The previous segments hold everything, and repair continues with
+  the segment before it as the last segment. A segment 0 like this is
+  still corruption: its pipeline never journaled a command, so nothing
+  in it was acknowledged.
 
 Repair truncates the file to its last valid record, in place, and reports
-how many bytes it removed. Every other defect is still corruption, exactly
+how many bytes it removed (a deleted segment: its whole size). Every other defect is still corruption, exactly
 as in strict mode. A pipeline may only append (§6) to repaired or clean
 files.
 

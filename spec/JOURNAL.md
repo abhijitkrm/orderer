@@ -11,7 +11,8 @@ what the pipeline needs:
 - the recovery procedure
 - (1.2) per-record checksums, crash repair, and segments rotated at
   checkpoints
-- (1.3) repair deletes a segment a crash left without a usable header
+- (1.3) repair cuts zero-filled tails and deletes a segment a crash left
+  without a usable header
 
 Vectors: `vectors/pipeline/`, `vectors/journal/`, `vectors/recovery/`.
 
@@ -236,26 +237,32 @@ corruption, and harnesses exit 2:
 ### 5.1 Repair (1.2)
 
 A crash can tear only the end of a file: the last write may be partial, or
-the file may have been extended without its data reaching the disk.
+the file may have been extended without its data arriving. The second
+happens without power loss: on macOS, killing a process during a large
+write can leave the file extended by zero bytes where the data never
+landed, a whole write buffer of them.
 *Repair* mode handles exactly that, and nothing else. For the **last
 segment** of each journal file family:
 
 - JSONL: a final line without a newline is cut off.
-- Binary: a partial final record is cut off. Then, in version 2, a final
-  complete record whose checksum fails is cut off too (one record at most).
+- Binary: a partial final record is cut off. Then (1.3) every final
+  record that is entirely zero bytes is cut off; no valid record is all
+  zeros (its checksum would fail, and iseq 0 is never assigned). Then, in
+  version 2, a final complete record whose checksum fails is cut off too
+  (one record at most: the record the interrupted write was filling).
 - (1.3) A segment that cannot hold a record is deleted, if its start is
   above 0. That is a JSONL segment with no newline at all, or a binary
-  segment no longer than the 64-byte header whose header is invalid
-  (empty, partial or zero-filled). A crash between creating segment `N`
-  at a checkpoint (§6 step 2) and its header reaching the file leaves
-  one. The previous segments hold everything, and repair continues with
+  segment whose 64-byte header is invalid (empty, partial or zero-filled)
+  and whose bytes after the header, if any, are all zero. A crash
+  between creating segment `N` at a checkpoint (§6 step 2) and its header
+  reaching the file leaves one. The previous segments hold everything, and repair continues with
   the segment before it as the last segment. A segment 0 like this is
   still corruption: its pipeline never journaled a command, so nothing
   in it was acknowledged.
 
 Repair truncates the file to its last valid record, in place, and reports
-how many bytes it removed (a deleted segment: its whole size). Every other defect is still corruption, exactly
-as in strict mode. A pipeline may only append (§6) to repaired or clean
+how many bytes it removed (a deleted segment: its whole size). Every
+other defect is still corruption, exactly as in strict mode. A pipeline may only append (§6) to repaired or clean
 files.
 
 ## 6. Checkpoints (1.2)

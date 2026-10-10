@@ -57,7 +57,7 @@ for input in multisymbol fuzz_s11; do
   echo "ok   checkpoint/$input"
 done
 
-for name in fuzz_s11 checkpoint_fuzz_s11; do
+for name in fuzz_s11 checkpoint_fuzz_s11 zerofill_fuzz_s11; do
 d=$V/repair/$name
 if [ -d "$d" ]; then
   for enc in jsonl binary; do

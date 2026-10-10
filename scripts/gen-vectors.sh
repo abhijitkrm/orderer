@@ -147,6 +147,41 @@ for enc in jsonl binary; do
   cp "$V/checkpoint/fuzz_s11/recov.evt" "$d/recov.$enc.evt"
 done
 
+# ---- repair (1.3): zero-filled tails --------------------------------------
+# An interrupted write can leave a file extended by zeros. Inputs, from
+# fuzz_s11's P=2 journals. Binary: cmd-0 gains 3 zero records and a
+# partial zero record; evt-1's last 4 records are zeroed and the record
+# before them half-zeroed (the one the write was filling). JSONL: cmd-1
+# gains 300 zero bytes; evt-0's last line is cut short and zero-padded.
+# The expected files are computed here, not by an implementation.
+d="$V/repair/zerofill_fuzz_s11"
+rm -rf "$d"; mkdir -p "$d"
+for enc in jsonl binary; do
+  flag=""; [ $enc = binary ] && flag=--binary
+  src="$V/pipeline/fuzz_s11/P2/$enc"
+  cp -R "$src" "$d/$enc.torn"; cp -R "$src" "$d/$enc.repaired"
+  python3 - "$d/$enc.torn" "$d/$enc.repaired" $enc <<'PY'
+import sys
+torn, rep, enc = sys.argv[1:4]
+def rd(p): return open(p, 'rb').read()
+def wr(p, b): open(p, 'wb').write(b)
+if enc == 'binary':
+    c = rd(f'{torn}/cmd-0.bin'); wr(f'{torn}/cmd-0.bin', c + bytes(3 * 48 + 20))
+    e = bytearray(rd(f'{torn}/evt-1.bin'))
+    wr(f'{rep}/evt-1.bin', bytes(e[:-5 * 56]))
+    e[-4 * 56:] = bytes(4 * 56)
+    e[-5 * 56 + 28:-4 * 56] = bytes(28)
+    wr(f'{torn}/evt-1.bin', bytes(e))
+else:
+    c = rd(f'{torn}/cmd-1.journal'); wr(f'{torn}/cmd-1.journal', c + bytes(300))
+    e = rd(f'{torn}/evt-0.journal')
+    last = e.rstrip(b'\n').rfind(b'\n') + 1
+    wr(f'{rep}/evt-0.journal', e[:last])
+    wr(f'{torn}/evt-0.journal', e[:last] + e[last:last + 15] + bytes(100))
+PY
+  "$BIN/orderrecover" --journal-dir "$d/$enc.repaired" $flag --partitions 2 > "$d/recov.$enc.evt"
+done
+
 # ---- compat: version-1 binary journals (read-only; committed as-is) ---------
 [ -d "$V/compat/v1/fuzz_s11_P2/binary" ] || { echo "missing vectors/compat/v1"; exit 1; }
 
@@ -191,6 +226,9 @@ for inp in ["multisymbol", "fuzz_s11"]:
 vectors.append({"name": "repair/fuzz_s11", "kind": "repair",
     "desc": "JOURNAL.md 1.2 §5.1: <enc>.torn = P=2 journals with torn tails; orderrecover --repair --partitions 2 on a copy leaves <enc>.repaired and prints recov.<enc>.evt; strict recovery of .torn exits 2",
     "partitions": 2, "files": files("repair/fuzz_s11")})
+vectors.append({"name": "repair/zerofill_fuzz_s11", "kind": "repair",
+    "desc": "JOURNAL.md 1.3 §5.1: <enc>.torn = fuzz_s11 P=2 journals extended by zeros an interrupted write left (zero records, a half-filled record; JSONL zero bytes); orderrecover --repair --partitions 2 leaves <enc>.repaired (computed independently) and prints recov.<enc>.evt; strict recovery of .torn exits 2",
+    "partitions": 2, "files": files("repair/zerofill_fuzz_s11")})
 vectors.append({"name": "repair/checkpoint_fuzz_s11", "kind": "repair",
     "desc": "JOURNAL.md 1.3 §5.1: <enc>.torn = checkpoint/fuzz_s11 plus next-checkpoint segments without a usable header (partial, empty, zero-filled); orderrecover --repair --partitions 2 deletes them, leaving <enc>.repaired, and prints recov.<enc>.evt; strict recovery of .torn exits 2",
     "partitions": 2, "files": files("repair/checkpoint_fuzz_s11")})

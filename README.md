@@ -113,8 +113,8 @@ scripts skip any that are absent.
   | Rust | ~33 | ~46 (P=3) | ~20 |
   | C++ | ~28 | ~40 (P=3) | ~18 |
   | Java | ~20 | ~20 | ~15 |
-  | Go | ~13-17 | ~18 (P=4); ~29 with `--egress inline` | ~13 |
-  | TypeScript | ~8 | ~8 | ~6 |
+  | Go | ~19 (P=3) | ~20 (P=3); ~29 with `--egress inline` (P=4) | ~13 |
+  | TypeScript | ~8 (P=3) | ~10 (P=3) | ~6 |
 
   The ~33M ceiling was the protocol's two clock reads per command, not the
   pipeline: a no-op core reaches 92M on a threaded egress and 152M with

@@ -73,6 +73,41 @@ instrumentation costs only 0-10%, because the engine thread is the limit there.
 Reproduce: `orderbench <w6 prefix> --mode pipe --journal off --partitions 3
 --latency off [--egress inline] [--core noop]`.
 
+**4. The same two switches in the other ports.** `--latency on|off` is in all
+five orderbench tools; `--egress thread|inline` (journals off only) is in
+Rust, C++, Java and Go. It does not exist in TypeScript: its engines run in
+worker threads and the egress plugs on the owner thread, so there is no
+"inline" to offer. Real matcher, journals off, W6, M1, medians of 3 (Java 2)
+in M commands/s:
+
+| port | P | thread, latency on | inline, latency on | thread, latency off | inline, latency off |
+|---|---|---:|---:|---:|---:|
+| C++ | 1 | 16.3 | 14.6 | 17.1 | 17.5 |
+| C++ | 2 | 28.0 | 27.6 | 30.2 | 32.3 |
+| C++ | 3 | 27.6 | **34.0** | 40.7 | 39.2 |
+| C++ | 4 | 26.4 | 27.5 | 34.5 | 32.6 |
+| Java | 2 | 17.2 | 11.9 | 16.9 | 18.6 |
+| Java | 3 | 17.3 | 16.8 | 19.4 | 21.4 |
+| Go | 2 | 13.3 | 12.5 | 13.0 | 13.6 |
+| Go | 3 | 18.2 | 18.4 | 19.1 | 20.7 |
+| Go | 4 | 17.3 | **24.3** | 17.6 | **29.5** |
+
+No-op matcher (the pipeline alone), P=2, latency off: C++ 68.1 -> 101.3 with
+inline egress, Go 31.3 -> 36.7, Java 41.3 -> 36.5 (slower). Latency off, thread
+egress, no-op P=2 vs on: C++ 45.9 -> 68.1, Java 22.7 -> 41.3, TypeScript 8.9 ->
+14.7, Go 28.9 -> 31.3.
+
+- **The clock reads are not the ceiling everywhere.** Go's pipeline barely moves
+  when they are removed (13.3 -> 13.0 at P=2) and its no-op pipeline stays near
+  31M: its limit is elsewhere (goroutine scheduling and the interface-typed
+  event path), which this data does not locate.
+- **Inline egress is a trade that depends on the runtime.** Rust and C++: a win at
+  one partition count under the protocol's instrumentation, neutral otherwise.
+  Java: slower with instrumentation on, level without. Go: a large win at P=4
+  (+40% on, +68% off), where the busy-spinning router, four engines and four
+  egress goroutines contend for the scheduler's Ps; removing the egress
+  goroutines relieves that. Defaults are unchanged in every port.
+
 ## 0.2.0 / orderer-spec 1.2: all five ports after the improvement round (2026-10-09)
 
 `COOLDOWN=5 scripts/bench.sh --n 10000000`, same Apple M1, one producer.

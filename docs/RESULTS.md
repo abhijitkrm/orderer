@@ -9,6 +9,69 @@ Pipeline latencies below come from **open-loop saturation runs**: one
 producer publishes the whole corpus as fast as the ingress accepts it. They
 measure queueing delay at full load (milliseconds), not service time.
 
+## orderer-rust: re-ported core, and where the pipeline's ceiling really was (2026-10-28)
+
+Same Apple M1 (4 performance + 4 efficiency cores), one producer, W6 = 10M
+commands over 64 symbols, medians of 3 runs unless noted. Rows below that say
+"latency on" are the BENCH.md protocol: every command is stamped at publish and
+sampled at egress.
+
+**1. Re-vendoring the core did not move the pipeline.** `orderer-core` was a
+port of matcher-rust from before the chunk-store layout. Re-porting matcher-rust
+5ab6488 (inline chunks, tagged order map, forced inlining) lifted the core
+(W4 untimed 31.4M -> 35.3M, W6 untimed 27.8M -> 28.6M) and left the pipeline
+within run-to-run noise (journals off, P=2: 32.0M -> 31.5M; P=4: 30.4M ->
+29.0M; durable P=3: 20.1M -> 21.0M). The pipeline was not core-bound.
+
+**2. The ceiling was the protocol's clock reads.** With a no-op matcher
+(`--core noop`) the pipeline plateaued at 32-34M commands/s at every P, however
+many producers, however large the rings, whatever the wait strategy or batch
+size. Two clock reads per command (the producer's publish stamp and the egress
+latency sample) cost more than the router, engine hand-off and egress
+together. `orderbench --latency off` (new) skips both:
+
+| journals off, M commands/s | latency on (protocol) | latency off |
+|---|---:|---:|
+| real matcher, P=1 | 17.9 | 18.0 |
+| real matcher, P=2 | 32.0 | 35.1 |
+| real matcher, P=3 | 27.8 | **46.4** |
+| real matcher, P=4 | 27.7 | 43.0 |
+| no-op matcher, P=1 | 34.2 | 85.4 |
+| no-op matcher, P=2 | 33.9 | 92.4 |
+| no-op matcher, P=4 | 31.9 | 72.8 |
+
+Durable rows (binary journals, fsync/1024) do not move: P=2 15.4M, P=3 20.1M,
+P=4 19.8M with latency on and 15.5M, 20.2M, 21.5M off. They are bounded by the
+journal bytes and `F_FULLFSYNC`, not by the pipeline.
+
+**3. Inline egress.** `EgressPlacement::Inline` (orderer-rust, opt-in, journals
+off only) runs the egress plugs on the engine thread: no outbox ring, no egress
+thread, no per-event copy. Same events in the same order. Medians, M
+commands/s:
+
+| | thread, latency on | inline, latency on | thread, latency off | inline, latency off |
+|---|---:|---:|---:|---:|
+| real matcher, P=1 | 17.9 | 13.7 | 18.0 | 18.0 |
+| real matcher, P=2 | 32.0 | 26.1 | 35.1 | 34.8 |
+| real matcher, P=3 | 27.8 | **35.6** | 46.4 | 47.9 |
+| real matcher, P=4 | 27.7 | 29.4 | 43.0 | 37.0 |
+| no-op matcher, P=2 | 33.9 | 62.4 | 92.4 | **152.5** |
+
+Inline wins where cores are scarce (P=3 with the protocol's instrumentation:
++28%; no-op P=2: 62M and 152M), and loses at P=1-2, where the engine thread
+becomes the bottleneck and a separate egress core was free. With the
+instrumentation off there is no clear winner at P=3-4.
+
+What it means: the pipeline's own overhead is not 30 ns per command but well
+under 10 (152M no-op commands/s with inline egress and no clocks). On this
+machine the real-matcher rows are bounded by cores: 3 engines at ~15M each
+plus producer, router and egress is already 6 busy threads on 4 performance
+cores. The published 31-33M "journals off" rows are the protocol's
+instrumentation cost, not the engine.
+
+Reproduce: `orderbench <w6 prefix> --mode pipe --journal off --partitions 3
+--latency off [--egress inline] [--core noop]`.
+
 ## 0.2.0 / orderer-spec 1.2: all five ports after the improvement round (2026-10-09)
 
 `COOLDOWN=5 scripts/bench.sh --n 10000000`, same Apple M1, one producer.

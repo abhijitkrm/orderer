@@ -66,8 +66,9 @@ What it means: the pipeline's own overhead is not 30 ns per command but well
 under 10 (152M no-op commands/s with inline egress and no clocks). On this
 machine the real-matcher rows are bounded by cores: 3 engines at ~15M each
 plus producer, router and egress is already 6 busy threads on 4 performance
-cores. The published 31-33M "journals off" rows are the protocol's
-instrumentation cost, not the engine.
+cores. At P=3-4 the published 28-31M "journals off" rows are largely the protocol's
+instrumentation cost rather than the engine (46M without it); at P=1-2 the
+instrumentation costs only 0-10%, because the engine thread is the limit there.
 
 Reproduce: `orderbench <w6 prefix> --mode pipe --journal off --partitions 3
 --latency off [--egress inline] [--core noop]`.

@@ -105,11 +105,23 @@ scripts skip any that are absent.
   `repair/rotation_fuzz_s11` and `repair/zerofill_fuzz_s11` pin them.
 - **Every port exposes `stats()`**: ring depths, counters, durability
   watermarks and fsync timings, with Prometheus text output.
-- **Performance** (Apple M1, W6, one producer; [`docs/RESULTS.md`](docs/RESULTS.md)):
-  Rust and C++ reach about 32M commands/s with journals off and 18–21M
-  durable; Java 20M / 15M; Go 13M / 14M; TypeScript 8M / 6M. The durable
-  scaling gate is **not met** on that machine: an `F_FULLFSYNC` there
-  averages ~12 ms.
+- **Performance** (Apple M1, W6, one producer; [`docs/RESULTS.md`](docs/RESULTS.md)),
+  in M commands/s, journals off unless noted:
+
+  | Port | Default (protocol timestamps) | `--latency off` | Durable |
+  |---|---|---|---|
+  | Rust | ~33 | ~46 (P=3) | ~20 |
+  | C++ | ~28 | ~40 (P=3) | ~18 |
+  | Java | ~20 | ~20 | ~15 |
+  | Go | ~13-17 | ~18 (P=4); ~29 with `--egress inline` | ~13 |
+  | TypeScript | ~8 | ~8 | ~6 |
+
+  The ~33M ceiling was the protocol's two clock reads per command, not the
+  pipeline: a no-op core reaches 92M on a threaded egress and 152M with
+  `--egress inline` (Rust, P=2). Inline egress (journals off only) runs the
+  egress plugs on the engine thread and helps Go (+40-68%) and C++ at P=3
+  but not Java. The durable scaling gate is **not met** on that machine: an
+  `F_FULLFSYNC` there averages ~12 ms.
 - **Found and fixed upstream** ([`docs/UPSTREAM.md`](docs/UPSTREAM.md)):
   bugs and performance problems in matcher-rust, matcher-cpp and matcher-go,
   each with a regression test or vector.

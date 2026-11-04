@@ -572,8 +572,9 @@ snapshot catch-up, and the simulator is shown to catch five deliberately
 broken variants. Real replicas over TCP survive leader kills, partitions and
 restarts with no acknowledged loss. `scripts/failover.sh` runs three real
 processes under load with real fsync and `kill -9`s the leader five or six
-times per run: seven runs passed (about 800,000 commands, 40 kills), and the
-replicas end with identical applied sequences and state digests. That script
+times per run: six consecutive runs on the final code passed (36 kills,
+15,920 acknowledged batches, 796,000 commands), and the replicas end with
+identical applied sequences and state digests. That script
 caught a real recovery bug before any unit test did (a zero-filled WAL tail
 read as corruption).
 

@@ -317,8 +317,9 @@ All integers little-endian. CRC is CRC-32C (`JOURNAL.md` §2.2).
   processes with real fsync, a load generator, and `kill -9` of the current
   leader five or six times under load. Passes only if every acknowledged batch
   is present on every replica, in the same order, exactly once, and all
-  replicas end at the same state digest. Seven runs passed, about 16,000
-  acknowledged batches (800,000 commands) and 40 leader kills. Early runs of
+  replicas end at the same state digest. On the final code, six consecutive
+  runs passed: 36 leader kills and 15,920 acknowledged batches (796,000
+  commands). Early runs of
   this script found a real recovery bug (a zero-filled WAL tail misread as
   mid-file corruption; two of the first four runs failed on it).
 

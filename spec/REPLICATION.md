@@ -1,8 +1,10 @@
-# REPLICATION — replicated ingress log and failover (DRAFT v0.1)
+# REPLICATION — replicated ingress log and failover (v0.2, implemented in orderer-rust)
 
-**Status: draft, not yet part of any tagged spec.** Nothing here is
-implemented. It is written to be argued with before code exists. Open
-decisions are marked **[DECIDE]** and collected in §11.
+**Status: implemented in `orderer-rust` only; not yet part of a tagged spec
+and not yet ported.** §1-§12 are the design as proposed. The decisions in §11
+are now resolved, and **§13 records what was built, the wire formats, what
+was measured, and what is not covered.** Where §13 and an earlier section
+differ, §13 is what the code does.
 
 Extends `PIPELINE.md` and `JOURNAL.md`. Matching semantics stay matcher's
 and are not restated.
@@ -215,3 +217,172 @@ Writing consensus is the risky part, so correctness evidence comes first.
 | R-D | TCP transport, snapshot transfer, real 3-node run |
 | R-E | Failover under load (kill -9), digest checks, BENCH numbers on Linux |
 | R-F | Ports: C++, Java, Go, TS against `vectors/replication/` |
+
+
+---
+
+## 13. As built (orderer-rust)
+
+### 13.1 Decisions resolved
+
+| | Decision |
+|---|---|
+| D1 | **One log per group**, and **several independent groups** for scale-out (§13.5). A group is a Raft group owning a set of symbols. Within a group the total ingress order holds; between groups there is none. |
+| D2 | Apply after commit, as proposed. No state is ever rolled back. |
+| D3 | Built, not wrapped. `orderer-consensus` is the protocol as a pure state machine; `orderer-cluster` is the runtime. |
+| D4 | Pre-vote is in v1. |
+| D5 | Controls are not yet log entries. A replicated cluster does not offer cluster-wide barrier/snapshot/shutdown controls; snapshots are per replica and driven by log index (§13.3). |
+| D6 | Static membership. |
+
+### 13.2 Protocol details beyond §1-§12
+
+* **Acknowledgement is at commit, not apply.** A proposal is acknowledged
+  once its entry is durable on a quorum. The state machine applies on its own
+  thread (the *applier*); the consensus thread never calls it. A slow state
+  machine therefore cannot starve ticks and heartbeats (a regression test
+  makes one apply outlast the election timeout; it fails on the earlier
+  inline-apply design). Producers are pushed back with `Busy` once the
+  applier is `max_apply_backlog` entries behind.
+* **Outcomes are explicit.** `Ok(index)` = committed. `NotLeader(hint)` and
+  `Busy` = nothing was appended, retry. `Timeout` / `Unknown` = the entry may
+  still commit; the client must not retry blindly (this is what the idempotent
+  client IDs of the gateway step are for). `Superseded` = the index was
+  committed with another leader's entry: lost.
+* **Replication is pipelined.** The leader advances a follower's `next_index`
+  optimistically after sending, so a burst of proposals is not resent; a lost
+  message surfaces as a failed reply carrying a hint.
+* **Divergence check.** At every `digest_every` log indexes each replica's
+  applier computes a SHA-256 of its state (`StateMachine::digest`) and sends
+  it to the others. A replica whose digest differs from a strict majority's
+  halts itself (fail-stop). If no digest has a majority it halts too.
+* **Log compaction and catch-up.** The applier snapshots at an applied index,
+  stores the snapshot durably, and only then does the log drop the prefix it
+  covers. A follower whose needed prefix is gone is sent the snapshot over the
+  transport (chunked, length- and CRC-checked) and installs it
+  (`Node::install_snapshot`).
+
+### 13.3 On-disk and wire formats
+
+All integers little-endian. CRC is CRC-32C (`JOURNAL.md` §2.2).
+
+* **WAL** (`raft.wal`): 8-byte magic `ORDWAL\0\1`, then frames
+  `len u32 | crc u32 | body`. One frame is one atomic consensus write: `term
+  u32 | voted_for u8 (255 = none) | compact flag u8 [index u64, term u32] |
+  from u64 | n u32 | n × (term u32, len u32, data)`. Replaying frames with the
+  protocol core's own `Disk::apply` reproduces the state it handed to the
+  disk. Recovery cuts a **torn tail** (incomplete or failing frame with
+  nothing valid after it, including a **zero-filled tail**, which a SIGKILL
+  during an append can leave) and **refuses to start** on damage followed by
+  valid frames. A frame body shorter than 18 bytes is never valid, which is
+  what makes zero fill detectable.
+* **Snapshot** (`snap-<index>.snap`): `ORDS | index u64 | term u32 | len u64 |
+  crc u32 | data`, written to a temp name, fsynced, renamed, directory fsynced.
+* **Log entry payload**: empty (a leader's no-op) or `0x01 | n u32 | n × 32`
+  bytes, each command being a journal record without `iseq`, checksum or
+  padding (`symbol, cmd, side, otype, tif, order_id, price, qty`). One entry
+  carries a whole batch, so consensus cost is per batch, not per command.
+* **Transport frame**: `len u32 | crc u32 | kind u8 | body`. Kinds: message,
+  snapshot begin / chunk / end, digest, hello. A frame over 64 MiB, with a bad
+  checksum, a bad body, or from a node outside the cluster id closes the
+  connection.
+* **Client protocol**: the same envelope; requests `PROPOSE`, `STATUS`,
+  `HASH`.
+
+### 13.4 Verification that exists
+
+* **Protocol core, simulated** (`orderer-consensus`): 3, 5 and 7 nodes, with
+  and without pre-vote, message loss / duplication / reordering / delay,
+  partitions, crashes with torn disk tails, slow fsync, compaction and
+  snapshot catch-up. Checks election safety, log matching, leader
+  completeness, one agreed committed sequence, no entry committed twice or
+  never proposed, state-machine equality after healing. Tens of thousands of
+  seeds clean (1,000 seeds: about 22,000 compactions and 3,000 snapshot
+  installs). Five deliberate protocol bugs (commit on one ack, skip the vote
+  up-to-date check, double vote, commit an old-term entry by counting) are
+  caught, the last by a directed figure-8 test.
+* **Real replicas over TCP and real files** (`orderer-cluster/tests`): 16
+  cluster tests (election, ordering, redirect, leader crash with no
+  acknowledged loss, repeated leader kills under concurrent load, isolated
+  leader cannot commit, snapshot catch-up, whole-cluster restart, torn and
+  corrupt WAL, digest divergence halts the odd node out, hostile connections,
+  five nodes with two failures, no quorum no ack, slow state machine does not
+  cost leadership), 6 client-protocol tests (connection reuse, frames split
+  across the read timeout, malformed frames, leader following), 2 tests that
+  run the real matching pipeline as the state machine and require its events
+  and state to equal an unreplicated pipeline's through follower snapshot
+  restore and leader failover, 2 sharded-group tests, and unit tests for the
+  WAL (every possible torn prefix, zero tails, mid-file damage, rewrite), codec
+  (truncations and random garbage never panic), snapshot store and SHA-256.
+* **Real processes** (`orderer-rust/scripts/failover.sh`): three `orderer-node`
+  processes with real fsync, a load generator, and `kill -9` of the current
+  leader five or six times under load. Passes only if every acknowledged batch
+  is present on every replica, in the same order, exactly once, and all
+  replicas end at the same state digest. Seven runs passed, about 16,000
+  acknowledged batches (800,000 commands) and 40 leader kills. Early runs of
+  this script found a real recovery bug (a zero-filled WAL tail misread as
+  mid-file corruption; two of the first four runs failed on it).
+
+### 13.5 Scale-out and what a single group can carry
+
+One group is bounded by its leader: it writes every entry to its own WAL and
+sends it to every follower. With 32-byte commands that is roughly `rate × 32 B`
+of WAL and `rate × 32 B × (N-1)` of network egress at the leader. On a 10 GbE
+NIC and N = 3 the leader's network alone caps one group near 19 M
+commands/s (analytic; not measured, this machine has no NIC to saturate).
+Independent groups (`orderer_cluster::shard`) multiply that: symbols are
+assigned to groups by a hash chosen not to correlate with the pipeline's own
+symbol-to-partition hash, `ShardedClient` splits a batch per group, and the
+groups share nothing, so an outage in one does not stop another (tested).
+The price is the global order: there is none between groups, only between the
+commands of one symbol.
+
+### 13.6 Measured (Apple M1, 8 cores, everything on one machine)
+
+All replicas, producers and the OS share one 8-core laptop, one SSD and one
+loopback interface, and a web browser was running. These are floors for what
+dedicated hardware per replica would do, not ceilings, and the cross-group
+scaling below is **not** demonstrated by them: the machine is the limit.
+
+| Configuration | Result |
+|---|---|
+| 1 node, no-op state machine, no fsync | 46.9 M commands/s (1.5 GB/s of log) |
+| 3 nodes, no-op, no fsync, 1000-command batches | 16.2 M commands/s (519 MB/s) |
+| 3 nodes, no-op, **fsync on a quorum**, batch 100 / 1000 / 8000 | 1.3 / 8.3 / 12.3 M commands/s |
+| 1 node, real matching pipeline (P = 2) | 31.6 M acked, 25.6 M applied |
+| 3 nodes, real matching pipeline (P = 2) | 7.8 M acked, 6.6 M applied on every node |
+| 1 / 2 / 3 groups, 3 nodes each, no-op | 16.2 / 16.5 / 18.3 M aggregate (box-limited) |
+| ack latency, batch of 1, fsync on | about 10 ms (macOS full fsync) |
+
+Two changes made most of the difference. CRC-32C was a byte-at-a-time loop at
+388 MB/s and every byte is checksummed about seven times on its way through
+WAL, sender, reader and follower WAL; a portable slicing-by-8 version reaches
+1.7 GB/s and the optional `hwcrc` feature (runtime-detected CPU instruction)
+5.3 GB/s. And applying inline starved heartbeats (§13.2).
+
+**Against matcher.** matcher-rust applies about 100 M operations/s on one
+core. The replicated path today carries 8-16 M commands/s per group (durable
+and not) and the applier, a single thread decoding and publishing into the
+pipeline, about 25 M. So one group is roughly a quarter to a sixth of one
+matcher core, not equal to it. Reaching matcher's rate takes about five to
+eight groups on dedicated hardware (or fewer with a wider applier and
+smaller commands); the aggregate has been measured only on one machine, where
+it does not scale.
+
+### 13.7 Not covered
+
+* Dynamic membership; TLS or any authentication on the transport and client
+  ports (the stated scope has no accounts, but an exchange still needs
+  transport security); linearizable reads (acks are at commit; there is no
+  read-index); client sessions and idempotent IDs, so a client cannot
+  safely retry an `Unknown`.
+* Cluster-wide barrier / snapshot / shutdown controls, and any consistent
+  snapshot across groups.
+* A parallel applier. The applier is one thread; a snapshot also runs on it,
+  so a large book pauses applying (not consensus) while it serialises.
+* Throughput on real multi-machine hardware, with a real NIC and NVMe, and
+  Linux fsync behaviour. Everything above is one laptop.
+* Ports to C++, Java, Go and TypeScript (phase R-F), and conformance vectors
+  for the protocol core.
+* One `unsafe` site was added, behind the `hwcrc` feature (runtime CPU
+  detection, tested equal to the portable code). It is the third sanctioned
+  site after `affinity` and `prefetch`.

@@ -557,3 +557,43 @@ cache.
 4. **Event journals cost about 2.5× the command journal's bytes.** That
    motivated the `spec/BENCH.md` gated configuration (command journals
    only; event journals are re-derivable).
+
+
+## Replication: orderer-rust (2026-11-04)
+
+The replicated engine (`spec/REPLICATION.md` §13) exists in `orderer-rust` as
+the crates `orderer-consensus` (protocol core and simulator) and
+`orderer-cluster` (WAL, snapshots, TCP transport, replica runtime, client
+protocol, `orderer-node`, `orderer-load`, `clusterbench`).
+
+**Correctness.** 124 tests pass in the workspace. The protocol core survives
+tens of thousands of simulated seeds with partitions, crashes, torn disks and
+snapshot catch-up, and the simulator is shown to catch five deliberately
+broken variants. Real replicas over TCP survive leader kills, partitions and
+restarts with no acknowledged loss. `scripts/failover.sh` runs three real
+processes under load with real fsync and `kill -9`s the leader five or six
+times per run: seven runs passed (about 800,000 commands, 40 kills), and the
+replicas end with identical applied sequences and state digests. That script
+caught a real recovery bug before any unit test did (a zero-filled WAL tail
+read as corruption).
+
+**Throughput** (one M1 laptop hosting every replica; floors, not ceilings):
+
+| Configuration | Commands/s |
+|---|---|
+| 3 nodes, no-op state machine, no fsync | 16.2 M |
+| 3 nodes, no-op, fsync on a quorum, batch 100 / 1000 / 8000 | 1.3 / 8.3 / 12.3 M |
+| 3 nodes, real matching pipeline | 7.8 M acked, 6.6 M applied on every node |
+| 1 node, real matching pipeline | 31.6 M acked, 25.6 M applied |
+
+Against a single matcher core (about 100 M operations/s) one replicated group
+is roughly a quarter to a sixth. Scale-out by independent groups is
+implemented and tested for correctness and isolation, but its throughput
+scaling could not be shown on one machine (1 / 2 / 3 groups: 16.2 / 16.5 /
+18.3 M aggregate, limited by the shared kernel, disk and loopback).
+
+**What mattered.** CRC-32C at 388 MB/s was a bottleneck (every byte is
+checksummed about seven times); slicing-by-8 gives 1.7 GB/s and a
+runtime-detected hardware path 5.3 GB/s. Applying on the consensus thread
+cost a slow-state-machine leader its leadership; applying on its own thread,
+with acknowledgement at commit and backlog back-pressure, fixed it.

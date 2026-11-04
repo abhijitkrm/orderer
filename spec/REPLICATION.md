@@ -180,7 +180,7 @@ Writing consensus is the risky part, so correctness evidence comes first.
    - every acked command is in every later leader's log;
    - applied state digests equal at equal `commit_index`.
    Any failure prints the seed and replays exactly.
-3. **Cross-port conformance.** The seeded input traces and expected effect
+3. **Cross-port conformance (implemented: `vectors/replication/`).** The seeded input traces and expected effect
    traces become vectors in `vectors/replication/`. Every port's protocol
    core must produce byte-identical effects for the same input trace, the
    same technique already used for matching. This is how five ports stay
@@ -406,8 +406,10 @@ it does not scale.
   so a large book pauses applying (not consensus) while it serialises.
 * Throughput on real multi-machine hardware, with a real NIC and NVMe, and
   Linux fsync behaviour. Everything above is one laptop.
-* Ports to C++, Java, Go and TypeScript (phase R-F), and conformance vectors
-  for the protocol core.
+* The replication runtime (WAL, snapshots, transport, replica, client) in
+  C++, Java, Go and TypeScript. Only the protocol core is ported, and only
+  to the languages named in `vectors/replication/README.md`, each proved
+  against the shared conformance vectors there.
 * `unsafe` was added in one place, behind the `hwcrc` feature (runtime CPU
   detection, tested equal to the portable code): the third sanctioned site
   after `affinity` and `prefetch`.

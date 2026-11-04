@@ -598,3 +598,24 @@ checksummed about seven times); slicing-by-8 gives 1.7 GB/s and a
 runtime-detected hardware path 5.3 GB/s. Applying on the consensus thread
 cost a slow-state-machine leader its leadership; applying on its own thread,
 with acknowledgement at commit and backlog back-pressure, fixed it.
+
+
+## Replication: the C++ runtime (2026-11-04)
+
+orderer-cpp implements the whole replication runtime and runs the matching
+pipeline as the replicated state machine (`spec/REPLICATION.md` 13.10, 13.11).
+
+**Interoperability.** Mixed Rust/C++ clusters (rust-rust-cpp, cpp-cpp-rust,
+cpp-cpp-cpp, a five-node mix, and rust-cpp-cpp with the authenticated
+handshake) run under load with `kill -9` of leaders; every acknowledged batch
+survives on every replica in one order exactly once, and replicas of both
+languages end with the same state digest, with the real matching pipeline as
+the state machine. Forcing lagging replicas to catch up by snapshot made
+snapshots of live pipeline state cross the language boundary in both
+directions; all replicas still agreed.
+
+**Throughput** (same busy M1, one process, best of 5, M commands/s acked /
+applied everywhere): 3 nodes, no-op state machine: Rust 16.7 / 16.5, C++ 19.2 /
+18.4. 3 nodes, matching pipeline: Rust 7.8 / 6.0, C++ 7.7 / 5.4. 1 node,
+matching pipeline: Rust 28.3 / 21.9, C++ 24.5 / 15.8. The single-node gap is
+the C++ matcher, not the replication layer.

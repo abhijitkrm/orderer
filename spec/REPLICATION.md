@@ -369,13 +369,37 @@ eight groups on dedicated hardware (or fewer with a wider applier and
 smaller commands); the aggregate has been measured only on one machine, where
 it does not scale.
 
-### 13.7 Not covered
+### 13.7 Client safety, reads and transport authentication
 
-* Dynamic membership; TLS or any authentication on the transport and client
-  ports (the stated scope has no accounts, but an exchange still needs
-  transport security); linearizable reads (acks are at commit; there is no
-  read-index); client sessions and idempotent IDs, so a client cannot
-  safely retry an `Unknown`.
+* **Exactly-once submission (sessions).** A client with a session id sends
+  each batch tagged `(client, seq)` (payload tag 2). Every replica wraps its
+  state machine in `DedupSm`, which applies a batch only if `seq` is newer
+  than the last applied for that client; the table is part of every snapshot
+  and state digest, so replicas skip the same entries. `Client::propose_session`
+  retries the *same* `(client, seq)` through lost connections and leader
+  changes until it is definitely committed, so `Unknown` no longer reaches the
+  caller. A session is one sequential stream: never send `seq + 1` before
+  `seq` has an answer. In the process-level failover test this took unknown
+  outcomes from 15 per run to 0, with every batch still applied exactly once.
+* **Linearizable reads (log barrier).** `ReplicaHandle::barrier()` commits an
+  empty entry and waits for the state machine to apply it. A leader that has
+  been deposed cannot commit, so it cannot answer; a read after the barrier
+  sees every write acknowledged before the call. It costs one log entry per
+  read; a read-index optimisation (a heartbeat round instead of an entry) is
+  future work.
+* **Authenticated transport (not encrypted).** With a pre-shared cluster key
+  (`ReplicaConfig::auth_key`, `ORDERER_KEY` for the binaries) replicas and
+  clients run a challenge-response handshake (HMAC-SHA256) and every later
+  frame carries a 128-bit MAC over direction, sequence number, kind and body.
+  A peer without the key cannot join or be impersonated, and altered,
+  replayed, dropped, reordered or reflected frames are rejected. Payloads are
+  **not encrypted**; use a tunnel for secrecy. TLS itself would need a
+  third-party dependency, which this workspace does not take.
+
+### 13.8 Not covered
+
+* Dynamic membership; confidentiality on the wire; a read-index fast path;
+  key rotation (the key is static per process).
 * Cluster-wide barrier / snapshot / shutdown controls, and any consistent
   snapshot across groups.
 * A parallel applier. The applier is one thread; a snapshot also runs on it,
@@ -384,6 +408,6 @@ it does not scale.
   Linux fsync behaviour. Everything above is one laptop.
 * Ports to C++, Java, Go and TypeScript (phase R-F), and conformance vectors
   for the protocol core.
-* One `unsafe` site was added, behind the `hwcrc` feature (runtime CPU
-  detection, tested equal to the portable code). It is the third sanctioned
-  site after `affinity` and `prefetch`.
+* `unsafe` was added in one place, behind the `hwcrc` feature (runtime CPU
+  detection, tested equal to the portable code): the third sanctioned site
+  after `affinity` and `prefetch`.

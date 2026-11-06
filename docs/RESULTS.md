@@ -619,3 +619,41 @@ applied everywhere): 3 nodes, no-op state machine: Rust 16.7 / 16.5, C++ 19.2 /
 18.4. 3 nodes, matching pipeline: Rust 7.8 / 6.0, C++ 7.7 / 5.4. 1 node,
 matching pipeline: Rust 28.3 / 21.9, C++ 24.5 / 15.8. The single-node gap is
 the C++ matcher, not the replication layer.
+
+## Replication: the Go, Java and TypeScript runtimes (2026-11-06)
+
+orderer-go, orderer-java and orderer-ts each implement the whole replication
+runtime, including the scale-out client and load tool, and run the matching
+pipeline as the replicated state machine (`spec/REPLICATION.md` 13.12, 13.13,
+13.14). With Rust and C++ that makes five runtimes, byte-compatible: WAL and
+snapshot files are identical, and replicas of different languages share one
+cluster.
+
+**Interoperability.** Mixed clusters (Go, Java and TypeScript each with Rust and C++, and Java and TypeScript each with Go) were run under load with
+`kill -9` of leaders, with the authenticated handshake, with the recorder state
+machine and with forced snapshot catch-up. Every acknowledged batch survived on
+every replica in one order exactly once, and all replicas ended with the same
+state digest. Four-language clusters (java-rust-cpp-go, ts-rust-go-cpp)
+passed; snapshots of live pipeline state crossed language boundaries in every
+direction exercised (3 installs in the former, 12 in the latter), and every
+replica still agreed.
+
+**Throughput** (busy 8-core M1, one process; M commands/s acked; best of 5, or
+of 3 for the fsync rows; Rust measured alongside in each session, so compare
+ratios, not sessions):
+
+| Configuration | Rust | C++ | Go | Java | TS |
+|---|---|---|---|---|---|
+| 3 nodes, no-op, no fsync | 17.1 | 19.2 | 17.2 | 9.9 (Rust 14.4) | 2.3 (Rust 8.3) |
+| 3 groups, no-op, no fsync | 22.9 | - | 22.6 | 11.5 (Rust 22.8) | 7.5 (Rust 21.9) |
+| 3 nodes, no-op, fsync, window 256 | 10.5 | - | 9.9 | 9.6 (Rust 13.5) | 3.7 (Rust 14.0) |
+| 3 nodes, matching pipeline, no fsync | 11.0 | 7.7 | 4.2 | 5.5 (Rust 9.5) | 0.89 (Rust 8.0) |
+| 1 node, matching pipeline, no fsync | 34.0 | 24.5 | 21.8 | 18.7 (Rust 33.7) | 3.6 (Rust 34.4) |
+
+The replication path costs the same in Go as in Rust. Java reaches about two
+thirds of Rust there, TypeScript (one thread doing what Rust spreads over
+several) a fraction. Where a pipeline is the state machine the per-language
+matcher and pipeline cost dominates, as in the single-process pipeline rows of
+the cross-language matrix above. The numbers move by up to 2x with machine load;
+these were taken while other benchmarks ran.
+

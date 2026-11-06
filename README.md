@@ -49,6 +49,10 @@ producers ─▶ INGRESS RING ─▶ ROUTER ─▶ inbox[p] ─▶ journal[p] �
   Acks wait for fsync (`spec/PIPELINE.md`).
 - **Per-partition egress fan-out.** Pluggable consumers each see every event
   in partition order.
+- **Optional replication.** The ingress order can itself be a replicated log:
+  Raft-style consensus per replica group, with replica groups sharded by
+  symbol to scale out (`spec/REPLICATION.md`). Every port implements the
+  runtime, and replicas of different languages share one cluster.
 - **Matcher semantics, unchanged.** At one partition, orderer's output is
   byte-identical to matcher's.
 
@@ -58,7 +62,11 @@ producers ─▶ INGRESS RING ─▶ ROUTER ─▶ inbox[p] ─▶ journal[p] �
 spec/        PIPELINE.md (ordering, durability, control) · ROUTING.md (partition map) ·
              JOURNAL.md (per-partition journals, binary format, snapshots) ·
              HARNESS.md (CLI contract) · BENCH.md (pipeline benchmark protocol)
+spec/        REPLICATION.md (replicated ingress log: protocol, wire and storage formats,
+             verification, scale-out, per-language runtimes and numbers)
 spec/matcher/     vendored matcher spec (semantics, vector schema, journal, bench)
+vectors/replication/       28 protocol conformance traces (28,000 recorded drain points)
+vectors/replication-wire/  wire and storage fixtures: messages, WAL files in every damaged state, snapshots
 vectors/routing/  partition-hash reference table, partition-table case
 vectors/pipeline/ per-partition listings + JSONL and binary journals at P=1,2,4
 vectors/recovery/ snapshot + tail → continuation, restored at a different P
@@ -103,6 +111,20 @@ scripts skip any that are absent.
   interrupted (now cut), and a torn segment behind a header-only one (now
   repaired too). Vectors `repair/checkpoint_fuzz_s11`,
   `repair/rotation_fuzz_s11` and `repair/zerofill_fuzz_s11` pin them.
+- **Replication** (`spec/REPLICATION.md`, unreleased): a Raft-style
+  replicated ingress log, built from scratch and verified by a deterministic
+  fault simulator (with mutation testing), 28 shared conformance traces and
+  wire/storage fixtures. All five languages implement the full runtime (WAL,
+  snapshots, authenticated TCP transport, exactly-once client sessions,
+  linearizable reads, scale-out over replica groups). Replicas of different
+  languages share one cluster: WAL and snapshot files are byte-identical and
+  every replica ends at the same SHA-256 state digest, proved under load with
+  `kill -9` of the leader: every language has run in mixed clusters with Rust
+  and with at least one other port, including four-language clusters, with
+  snapshots of live book state crossing language boundaries. Replicated
+  throughput on one M1, three nodes, no-op state machine: Rust ~17M, Go ~17M,
+  C++ ~19M, Java ~10M, TypeScript ~2-3M commands/s; ~8-10M with fsync on a
+  quorum (Rust, Go); [`docs/RESULTS.md`](docs/RESULTS.md) has the rest.
 - **Every port exposes `stats()`**: ring depths, counters, durability
   watermarks and fsync timings, with Prometheus text output.
 - **Performance** (Apple M1, W6, one producer; [`docs/RESULTS.md`](docs/RESULTS.md)),

@@ -707,9 +707,9 @@ machine, ack = commit at the leader:
 | 1k-20k cmds/s | 1 | fsync on a quorum | 10.7-16.0 ms | 17-21 ms | 22-30 ms |
 
 Past the knee latency is queueing: batch 100 is flat to about 2M commands/s and
-queues at 5M/s (p50 40 ms). The knee depends on the number of log entries per
-second (each costs a few microseconds on several threads), so single-command
-entries saturate near 40-80k/s here and batching moves it out. **Caveat:** on this
+queues at 5M/s (p50 40 ms), while batch 10 was still flat at 2M commands/s (200k
+entries/s). So the knee is not a pure entries-per-second limit, and what sets it
+(per-entry cost, bytes replicated, or both) was not isolated. **Caveat:** on this
 machine (4 fast and 4 slow cores) sporadic 80-125 ms stalls also appear at moderate
 load and do not track it. Message loss, the filesystem (a RAM disk changed
 nothing), log growth, memory pressure and OS wake-up latency (measured with C

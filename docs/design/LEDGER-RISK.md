@@ -1,6 +1,7 @@
 # Proposal: ledger and pre-trade risk
 
-Status: **proposal, for review. Nothing here is implemented.** Read
+Status: **decided; roadmap step 1 is implemented** in `orderer-rust/crates/orderer-ledger`
+(section 12). Sections 2-10 describe the design; later steps are not built. Read
 `COMMAND-FORMAT.md` first: this design relies on its account sidecar, leader
 timestamps and ledger-assigned order ids. Decisions that need an answer are
 collected in section 11.
@@ -194,3 +195,47 @@ come after phase 1 is proven in the simulator, not before.
    data. Any asset with a precision this cannot hold?
 5. **Who runs deposits and withdrawals?** The ledger exposes idempotent commands;
    the external payment or blockchain integration is outside this design.
+
+## 12. Decisions taken and what is built
+
+Decisions (the recommendations in section 11 were accepted):
+
+1. **Phase 1 first** (reserve, then match). Credit slices (phase 2) come after the
+   simulator and real-process tests are solid.
+2. **Market buys carry a protection price**; the ledger holds `price x qty` like any
+   limit order. A buy with no price is rejected (`BadPrice`).
+3. **Spot only.** Margin and derivatives are a separate design on the same ledger.
+4. **Amounts** are `u128` atoms; a symbol has `lot` base atoms per quantity unit and a
+   price in quote atoms per lot, so every product is an exact integer. Overflow rejects.
+5. **Deposits and withdrawals** are idempotent ledger commands keyed by external id;
+   the payment integration is outside the ledger.
+6. Self-trade prevention is not in the first release (it needs a matcher change).
+   Leader-stamped time is not used by the ledger yet.
+
+Step 1, as built (`orderer-ledger`): `Ledger` (pure, no I/O) and `LedgerSm` (adapter to
+the replication runtime); commands Deposit, Reserve, Cancel, Settle, Withdraw,
+Finalize, OutboxAck with a fixed little-endian wire format (golden bytes pinned);
+canonical snapshot and SHA-256 digest; `Ledger::check()` for the invariants.
+
+Refinements found while building it:
+
+- **I1 is per shard only with trade flows counted.** A trade moves value between
+  shards, so a single shard satisfies `holdings + withdrawn + settled_out =
+  deposited + settled_in`, and the plain statement "sum of balances = deposits minus
+  withdrawals" holds across all shards only once every event has been settled on every
+  shard involved. Both forms are checked.
+- **Contradictory events are anomalies, not panics.** A trade outside a limit, larger
+  than the remainder, or for an unknown order changes no balance, advances the mark (a
+  replay must not retry it) and is counted; `check()` fails while the count is non-zero.
+- **Order-hold exactness (I3):** each open order holds exactly `price x remaining`
+  (buy) or `lot x remaining` (sell); `check()` verifies that, not just the sums.
+- `Rejected` and `Replaced` events are not modelled: a rejection is a `Closed`, and
+  replace is later work.
+
+Verification so far: 15 unit tests and 3 property tests (60 seeds x 1,500 steps each on
+1 and 3 shards, with duplicated and delayed delivery, a price-time matching model, IOC
+orders, cancels by non-owners, withdrawals, snapshot restore and full-log replay, and a
+final conservation and hold-release check). Eight deliberately injected bugs (weakened
+mark check, no ownership check, no release on close, no fee booking, no price
+improvement refund, no funds check, non-idempotent deposit, no hold on withdrawal)
+were each caught.

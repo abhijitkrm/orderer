@@ -288,3 +288,63 @@ process, sharding of gateways, the reconciler for stuck orders (I5 is shown here
 with all roles eventually healthy), and an on-wire form of the matching-side intake
 (it must live in the matching group's state machine alongside the command-format
 sidecar).
+
+## 14. Step 4: time, reconciler, fees, adjustments
+
+Built in `orderer-ledger` (same crate, `LDG2` snapshots):
+
+- **Clock.** `Clock { now_ns }` (tag 8) is the only source of time in the state
+  machine; it only moves forward. Orders record `born` (the clock at reserve) and
+  `cancel_at`. Replicas therefore agree on every age. The clock is meant to be fed
+  by the leader-stamped timestamps of COMMAND-FORMAT; here it is a command.
+- **Reconciler.** `Sweep { max_age_ns, retry_ns, max }` (tag 9) queues a `Cancel`
+  to the outbox for open orders older than `max_age_ns` that have none queued, and
+  re-queues one when it was queued at least `retry_ns` ago (0 = never), at most
+  `max` per sweep, scanning in order-id order. **It never releases a hold.** Only a
+  matching event may, because the order might still be live; the simulator asserts
+  that no order resting in matching is ever absent from its ledger. A re-sent cancel
+  is harmless: it is a new outbox index (so intake accepts it) and matching treats
+  the cancel of an order that is not resting as a no-op. What the sweep guarantees
+  is I5 for abandoned orders (the client or gateway is gone): the order is cancelled
+  at matching and its `Closed` event releases the hold. What it cannot do is end a
+  hold whose `Closed` is stuck behind a stalled settler; the hold stays, safely,
+  until the stream flows again. The scan is O(open orders) per sweep (an age index
+  is later work).
+- **Fees.** `Config.fees` gives a `(maker_ppm, taker_ppm)` per symbol, falling back
+  to `fee_ppm` for both. `Event::Trade` gained `taker_is_buy` (the aggressor), so the
+  maker and the taker pay their own rate on what each receives, floored. Fees accrue
+  to a pool per asset (the system account `FEE_ACCOUNT = u64::MAX`, which no user
+  command may name: `Reject::ReservedAccount`). `FeeWithdraw` (tag 11) moves fees
+  into the existing pending-withdrawal table; `Finalize` pays them out or returns
+  them to the pool. Withdrawal ids are one namespace for users and fees.
+- **Adjustments.** `Adjust { account, asset, amount, credit, reason, external_id }`
+  (tag 10) is idempotent by `external_id` (a rejected one does not consume its id),
+  can never take `available` below zero, and is counted in conservation:
+  `holdings + withdrawn + settled_out + adjusted_out = deposited + settled_in +
+  adjusted_in`. The newest 256 adjustments (id, account, asset, direction, amount,
+  reason) are kept in a bounded ring in the state, in snapshots and in the digest;
+  the log of commands is the complete audit trail.
+
+Wire changes (all other layouts unchanged; Reserve's golden bytes are untouched):
+new command tags 8-11; the trade event (kind 1 inside `Settle`) ends with a
+`taker_is_buy u8` (0 or 1, anything else is refused); snapshots are `LDG2` and add
+the clock, per-order `born` and `cancel_at`, the adjustment ids, flows and ring.
+New golden bytes are pinned for tags 8-11 and for a trade settle.
+
+Evidence: 35 tests across five files, clippy clean. The whole-system simulator now
+also runs the clock, a periodic reconciler, a settler that stalls for long stretches
+(about 1.8K blocked ticks per 10 runs), adjustments and fee withdrawals; at the end
+nobody cancels anything and the reconciler alone must empty every ledger within five
+sweep rounds, with no hold left, matching empty, money conserved including
+adjustments, and fees paid out and returned. Mutation testing (18 mutations: clock
+backwards, birth not recorded, sweep ignoring age, `max`, or its own marking, retry
+always or never, maker and taker swapped, the taker flag ignored on one side, the
+per-symbol schedule ignored, fee withdrawal not debiting the pool, an unpaid fee
+withdrawal not returned, adjust not idempotent, overdraw, either direction not
+counted in conservation, the fee account open to users, an unbounded ring) were all
+caught, plus a sweep that releases holds itself, caught by the simulator's
+live-order check and the property tests.
+
+Not done here: an age index for the sweep; fee tiers by account or volume; wiring
+`Clock` to leader timestamps (needs the command-format sidecar); the withdrawal
+integration itself.

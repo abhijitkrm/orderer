@@ -349,6 +349,123 @@ Not done here: an age index for the sweep; fee tiers by account or volume; wirin
 `Clock` to leader timestamps (needs the command-format sidecar); the withdrawal
 integration itself.
 
+## 15. Step 3: real processes, the gateway, the audit and `kill -9` runs
+
+Built in `orderer-rust/crates/orderer-exchange` (binaries, `scripts/exchange-failover.sh`):
+
+| Process | What it is |
+|---|---|
+| `tier-node` | one matching-group replica: `MatchingTierSm`, a client port (status, state hash) and the exchange port (forward, cursor, read) |
+| `ledger-node` | one ledger-shard replica: `LedgerNodeSm`, a client port and the **gateway** port |
+| `exchange-relay forwarder` | per ledger shard: outbox to matching |
+| `exchange-relay settler` | per ledger shard: matching streams to settles |
+| `exchange-relay tick` | the clock and the reconciler (`Clock`, `Sweep`) for every shard |
+| `exchange-audit` | continuous or one-shot checking from outside |
+| `exchange-load` | deposits, random reserve/cancel/withdraw/deposit traffic through the gateway, drain |
+
+**Getting an outcome back.** The replication runtime tells a proposer only the log
+index. `LedgerNodeSm` keeps the reply of every applied entry in a bounded book keyed by
+index (65,536 entries, volatile); the gateway proposes, waits for the apply, and reads
+the reply from the book. No change to the runtime or its protocol.
+
+**Exactly-once for the gateway's callers.** The existing `DedupSm` sessions would
+skip a repeat but could not return the original reply, and a client that retries a
+`Reserve` needs the *same order id* back. So `LedgerNodeSm` has its own session
+table: per client the last sequence number and its reply, in the snapshot and digest. A
+repeat of `(client, seq)` is not applied again and gets the stored reply; an older
+sequence number gets `Stale`. The table is capped at 65,536 clients, evicting the oldest
+(deterministically); a client idle across that many newer ones must use a new id. Session
+protection is used for `Reserve`, `Cancel`, `Deposit`, `Withdraw`, `Finalize`. The
+relays' commands (`Settle`, `OutboxAck`, `Clock`, `Sweep`) go in bare: they are idempotent
+by construction (chained mark, monotonic values, the `cancelling` flag), and a session
+per relay would add state for nothing.
+
+**Gateway reads** take a flag. `lin = 1` is linearizable (a barrier through the log,
+leader only), used by the audit and the drain. `lin = 0` reads the applied state of
+whichever replica answers, used by the relays: a stale outbox base or settle mark only
+makes them resend what is already accepted.
+
+**Relays hold nothing that matters.** The forwarder asks matching for its cursor
+(then keeps it only as an optimisation), reads the outbox from there, forwards, and turns
+the reply into `OutboxAck`; on any error it forgets the cursor. The settler reads the
+shard's marks, reads each stream from `max(scan, mark) + 1`, builds `settle_cmds`, and
+sends them; on any refusal it forgets its scan position and restarts from the marks. It
+reads the stream once per shard (each shard scans every event); an index by shard is a
+later optimisation. Leader-following is in the clients (`GatewayClient`, `TierClient`):
+they try each address, follow a hint, and retry unknown outcomes, which is safe because
+every retried request is idempotent.
+
+**The audit** snapshots every shard linearizably and restores it into a local `Ledger`
+(a state that does not restore is a violation), runs `check()`, scans the matching streams
+incrementally, and checks always: the outbox base never passes the matching cursor, the
+cursor never passes the outbox end, a mark never passes its stream's end. When every
+shard has settled every event it is owed (`caught_up`), it also checks that trades moved
+exactly what they took and that money is conserved across shards. It compares replica
+digests per group (same log index, same digest). With a load file it verifies that every
+acknowledged order is filled or closed and none is open, that the archive mentions no
+unacknowledged order, and that the deposit and payout totals equal what the load
+generator saw acknowledged.
+
+**The run** (`scripts/exchange-failover.sh`): a 3-replica matching group, 2 ledger shards
+of 3 replicas, a forwarder and a settler per shard, the tick driver, a continuous audit
+and 4 load threads over 40 accounts, as 17 real processes. In turn it `kill -9`s the tick
+driver, a forwarder, a settler, shard 0's leader, shard 1's leader and the matching leader,
+restarting each a second later. Then the load stops, every acknowledged order still open
+is cancelled, and the final audit and `orderer-load settle` (same index, same digest on all
+three replicas of every group) must pass.
+
+**Results.** Eight complete runs of the script (60 s of load, 12 `kill -9`s: the tick driver,
+a forwarder, a settler, each ledger shard's leader and the matching leader, twice over),
+all PASS: five without relay fault injection, one with it, one more on the final tree
+together with the phase 2 code, and the first short smoke run (3 kills). Each run
+acknowledged about 7,200-7,650 reserves, 3,000-3,200 cancels, 1,000 withdrawals and 900
+deposits (about 125 operations per second over 4 threads, each a replicated log entry
+with relaxed fsync: a measurement of the harness, not of the system), moved 6,200-6,500
+events through the matching streams, passed 72-77 continuous audit rounds, and ended with
+`caught_up` true, no open order and equal digests on all three replicas of all three
+groups. The reconciler fired during the runs (about 50 sweeps that queued cancels).
+Three early script failures were not system failures: the kill schedule overran the load
+window and the script reported the load generator's normal exit as an early death (fixed:
+the pause is now computed from the number of kills).
+
+**Relay fault injection** (`--chaos N`, on by default in the script): every Nth forward is
+also sent again, in full and from the middle of the batch; every Nth settle batch is
+preceded by its last settle, out of order. These are the duplicates and reorderings
+the network may legitimately produce; a correct system makes all of them no-ops, and it
+passed with them. They were added because the first mutation round (below) showed that
+plain relays over TCP never produce one, so the harness could not see the exactly-once
+rules at all.
+
+**Mutation testing of the real-process harness** (one source change in the isolated tree,
+then the script; it must fail):
+
+| Mutation | Without fault injection (6 kills) | With it |
+|---|---|---|
+| matching intake accepts duplicates | survived | caught (ledger anomalies) |
+| ledger skips the `prev` check | survived | caught (trades took 262,000, delivered 272,000) |
+| forwarder trims the outbox before matching accepts | caught | caught in 2 of 3 runs; the third (6 kills) survived |
+
+The last row is a transient: between the trim and the forward the ledger's outbox base is
+past the matching cursor, which the audit flags only if a snapshot lands in that window
+(milliseconds), or a kill does; with 12 kills it was caught. A sampled check cannot be
+made certain; the whole-system simulator catches the same bug deterministically (section
+13), and this harness is the second line.
+
+**Not done.**
+- The gateway and exchange ports are unauthenticated (the client and replica ports use the
+  cluster key); private network only.
+- Reference data is `demo_config` compiled in, not a file.
+- The settler reads each stream once per shard (O(shards x events)); matching streams are
+  served from a bounded in-memory window, with no durable archive behind it.
+- The audit and the ledger digest are O(state): fine here, not for a large ledger; an
+  incremental audit over the ledger logs is the next step.
+- One matching group. Sharding the matching tier (a settler per group, source ranges) is
+  untested in real processes.
+- The script does not exercise phase 2 (credit slices) or a network partition; both are
+  open.
+- Throughput and latency of the gateway path have not been measured; it adds a replicated
+  hop per request by construction.
+
 ## 16. Step 5: credit slices (phase 2)
 
 Design: `CREDIT-SLICES.md`. Built in `orderer-ledger` (`Slice`, the lent-funds side

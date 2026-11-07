@@ -98,9 +98,12 @@ group that knows neither. There is no two-phase commit. Instead:
   session, at least once.
 - A ledger shard keeps, per matching group, the highest event index it has applied
   (`hw[source]`). `Settle` with `idx <= hw[source]` is a duplicate and is ignored;
-  otherwise it is applied and `hw` advances. Events for one shard arrive in stream
-  order, possibly with gaps (other shards' events), which is enough for a
-  monotonic mark. That is the whole exactly-once argument.
+  otherwise it is applied and `hw` advances. **Amended in step 2:** a mark alone is
+  only safe if events arrive in order, and a session guarantees order only for a
+  stop-and-wait sender. So every settle also carries `prev`, the index of the
+  previous event of that stream routed to the shard, and is applied only if `prev`
+  equals the shard's mark (else it is refused as a gap and nothing changes). Order,
+  loss, duplication and zombie senders then cannot skip an event.
 
 Effects on the shard, per event:
 
@@ -239,3 +242,49 @@ final conservation and hold-release check). Eight deliberately injected bugs (we
 mark check, no ownership check, no release on close, no fee booking, no price
 improvement refund, no funds check, non-idempotent deposit, no hold on withdrawal)
 were each caught.
+
+## 13. Step 2: relays and the whole-system simulator
+
+Built (`orderer-ledger`, `src/flow.rs`, `tests/system.rs`):
+
+- **Outbox to matching.** Outbox indices are contiguous, so the matching group's
+  `Intake` (replicated, in its snapshot) accepts a message only if its index is
+  exactly the next one for that ledger shard; lower is a duplicate, higher a gap.
+  This replaces "dedup by session" for this path: sessions skip sequence gaps, so a
+  pipelined message lost before a later one would be lost for good. The reply carries
+  the cursor; a `Forwarder` with no memory recovers from it (go-back-N) and the
+  cursor becomes `OutboxAck`, which trims the ledger's outbox.
+- **Settle chain.** `Cmd::Settle` gained `prev` (above). `settle_cmds(source, shard,
+  hw, stream, max)` builds the chain; a settler restarts by reading the shard's mark,
+  so its own memory (including its read position) is disposable. It scans the whole
+  stream per shard; an index by shard is a later optimisation.
+- Neither relay has durable state of its own. A crashed forwarder or settler is simply
+  a new one.
+
+Simulator: clients, 1 or 3 ledger shards, forwarders, a price-time matching group
+with IOC orders, and settlers, over a network that drops 8%, duplicates 7% and
+reorders freely, with crashes of forwarders and settlers and ledger failover (state
+restored from a snapshot, half the in-flight messages lost). Checked at every step:
+every shard's `check()`; the intake applies exactly the ledger's outbox, in order,
+with identical content; each shard applies exactly the events it is owed, in order,
+once; marks never go backwards. After faults stop, within a bounded number of rounds:
+all outboxes delivered and trimmed, all marks at the end of their streams. Then every
+order is cancelled and drained again, and money is conserved across shards, no hold
+is left, ledger orders equal resting orders, and each log replays to its state.
+
+Measured on 80 seeds of 3,000 steps (plus 10 for the fault census): 1.7K drops, 1.5K
+duplicates, 722 role crashes, 183 failovers, 620 settles refused as gaps, 3.2K intake
+gap refusals; no violation.
+
+Mutation testing: removing the `prev` check, letting intake skip gaps, letting it
+accept duplicates, acking what was sent rather than what was accepted, and using a
+wrong `prev` in the settler were each caught by the simulator; a mark that stalls on
+an anomaly and an unclamped ack by unit tests (the simulator's matching model never
+contradicts the ledger). Not caught, by design: dropping the go-back on a gap reply;
+it is only a latency optimisation, the timeout rewind provides liveness.
+
+Not yet done: real transport and processes (a gateway, `kill -9` runs), the audit
+process, sharding of gateways, the reconciler for stuck orders (I5 is shown here only
+with all roles eventually healthy), and an on-wire form of the matching-side intake
+(it must live in the matching group's state machine alongside the command-format
+sidecar).

@@ -1,7 +1,10 @@
 # Design: delegated credit slices (one-hop order path)
 
-Status: design for roadmap step 5. Builds on `LEDGER-RISK.md` (phases 1, sections
-1-14). Nothing here is implemented until section 9 says so.
+Status: **implemented in simulation and in the state machines** (roadmap step 5);
+not yet in the real-process scripts. Builds on `LEDGER-RISK.md` (sections 1-14); what
+was built, how it differs from this text, and the evidence are in `LEDGER-RISK.md`
+section 16 and in section 11 below. Sections 1-8 are the original proposal and are
+kept as written where they still hold.
 
 ## 1. Problem
 
@@ -110,13 +113,16 @@ chained `Settle` mark makes it exactly once):
 
 ## 9. Verification and roadmap
 
-1. Ledger side: `Lend`, `Net`, `Returned`, recall state; unit and property tests.
-2. Group side: credit table in the matching tier SM, local settle; unit tests.
-3. Simulator: extend the whole-system sim with slices, refills and recalls under the
-   same faults; check S1-S4 each step; mutations (skip credit check, double-apply Net,
-   recall committed funds, withdraw lent funds).
+1. Ledger side: `Lend`, `Recall`, slice events, `Returned`; unit tests. **Done.**
+2. Group side: credit table in the matching tier SM, local settle at epochs; unit and
+   determinism tests. **Done** (`Slice`, `MatchingTierSm::with_credit`).
+3. Simulator: whole-system sim with slices, recalls and withdrawals under the same
+   faults; S1-S4 each step; mutations. **Done** (`tests/slices.rs`, 17 mutations).
 4. Real processes: `kill -9` of ledger and group leaders with the audit running.
-5. Measure: order-to-ack latency on the open-loop harness, phase 1 vs phase 2.
+   **Not done.**
+5. Measure: per-order state-machine cost, phase 1 vs phase 2. **Done**
+   (`credit_bench`; the barrier at each epoch dominates below ~16K entries).
+   Order-to-ack latency on the open-loop harness: **not done.**
 
 ## 10. Open questions
 
@@ -124,3 +130,22 @@ chained `Settle` mark makes it exactly once):
 - Whether market data / risk checks beyond balance (position limits, rate limits)
   also live in the group's credit table. Leaning yes, same mechanism.
 - A shared multi-asset credit (portfolio margin) is out of scope.
+
+## 11. As built: differences from sections 4-6
+
+- `Net` became `SliceIn` / `SliceOut` per account and asset (the net change of the
+  account's money in the slice, already net of fees), plus `SliceFee` for the fees the
+  group charged. The slice keeps `p = granted + reported_in` and `q = returned +
+  reported_out` per key, so reports are exact without negative numbers.
+- `Recall` has no id and the ledger has no recalling state: a withdrawal draws on
+  `available` only. `Returned` may be smaller than asked, or absent.
+- One group per ledger shard pairing (one outbox); `lent_to[group]` is `lent`.
+- Slice order ids carry bit 15 of the shard field, assigned by the group; no id blocks.
+- The group applies fills at *credit epochs* (after a pipeline barrier, partition
+  streams in order), not inline: the matcher's partitions emit asynchronously, and an
+  inline settle would make the slice depend on thread timing. Hence proceeds and
+  released holds are spendable up to one epoch later, and the barrier costs about 1 ms
+  per epoch. The epoch length is therefore a throughput/latency-of-credit trade-off,
+  not a detail.
+- The global conservation identity that the simulator checks at every step, with
+  grants and returns in flight, is in `LEDGER-RISK.md` section 16.

@@ -348,3 +348,114 @@ live-order check and the property tests.
 Not done here: an age index for the sweep; fee tiers by account or volume; wiring
 `Clock` to leader timestamps (needs the command-format sidecar); the withdrawal
 integration itself.
+
+## 16. Step 5: credit slices (phase 2)
+
+Design: `CREDIT-SLICES.md`. Built in `orderer-ledger` (`Slice`, the lent-funds side
+of `Ledger`) and `orderer-exchange` (credit mode of `MatchingTierSm`, the group
+stream). Every claim below was run; numbers are from this build.
+
+**What exists.** `Lend` and `Recall` commands; `Grant` and `Recall` outbox messages
+(through the same exactly-once intake as phase 1); four settle events from the
+group, `SliceIn`, `SliceOut`, `SliceFee` and `Returned`, applied through the same
+chained marks; `Slice`, the group's credit table (a small ledger of its own: local
+pre-trade check, fills, fees, recall of uncommitted credit only, exact reports);
+and in the matching tier a credit mode: gateway requests (entry tag 6) are checked
+against the slice and entered in one replicated entry, fills are settled into the
+slice at deterministic *credit epochs*, and the slice's reports go to an extra
+stream (`source_base + partitions`) read like the partition streams.
+
+**Differences from the proposal**, found while building:
+- **One group per ledger shard pairing.** A ledger shard has one outbox, so it has
+  one destination group; `lent_to[group]` is just `lent`. A shard talking to several
+  groups needs per-group outboxes.
+- **No recall id, no recall state.** `Recall` is a request; `Returned` is the answer
+  (up to the uncommitted credit, possibly nothing). A withdrawal draws on `available`
+  only, so it cannot pay out lent funds by construction (S4); a client that wants to
+  withdraw more recalls first and retries.
+- **Reports are net per account and asset**, not per fill: `SliceIn` (net of fee) or
+  `SliceOut`, plus `SliceFee` for the fees the group charged, booked in the fee
+  pool of shard 0 (a convention of the routing function, `settle_cmds_routed`).
+  Before a `Returned` the group reports that account's net first, so the ledger's
+  `lent` always covers a return.
+- **Order ids come from the group**, with bit 15 of the shard field set, so ledger
+  shard numbers are below 0x8000 and no ledger mistakes a slice order for its own. No
+  id blocks are leased; the gateway learns the id from the reply.
+- **Epochs cost a pipeline barrier.** Fills reach the group asynchronously (the
+  partitions emit on their own threads), so they are applied at every `epoch`-th
+  applied entry, after a barrier, reading each partition's new events in partition
+  order. That keeps the slice a pure function of the log (three replicas and a
+  restored one agree) but proceeds and released holds are spendable only after the
+  next epoch, and the barrier is not free (see the measurement).
+
+**Formats.** Commands 12 `Lend` and 13 `Recall`; settle event kinds 3 `SliceIn`,
+4 `SliceOut`, 5 `SliceFee`, 6 `Returned`; outbox kinds 3 `Grant`, 4 `Recall`
+(forwarded as the same 30-byte message, the amount split over the price and quantity
+fields); tier entry tag 6 (request); snapshots `LDG3` (ledger) and `XTS2` (tier), each
+written **only when phase 2 state or credit mode exists**, so a phase 1 ledger's
+snapshot and digest are byte-identical to before. All other layouts are unchanged.
+
+**Invariants.** Lent funds are the account's money: `holdings` includes them, and
+each shard checks `lent + returned + slice_out == granted + slice_in` and the old
+local identity. Across the system, at every step of the simulator, exactly:
+`slice money - (slice in - slice out against phase 1 orders) == lent - applied in +
+applied out - grants not yet accepted - returns not yet applied` (S1, in flight
+included). S2 (no overdraft) is the slice's and ledgers' `check()`, S3 the intake
+order and chained marks, S4 the withdrawal assertion in the simulator.
+
+**Evidence.**
+- 11 unit tests (lend, recall, slice events, anomalies, wire, snapshot format
+  compatibility, the engine's check, exact reports, recall order, phase 1 ids ignored,
+  snapshot restore) and 9 tier tests (wire, local credit check, epoch reports, recall,
+  duplicate grants, mixed phase 1/2 trades, three replicas with 4 partitions plus a
+  restored replica agreeing on digests and streams across epochs, snapshot mode
+  mismatch, the group stream settled into a real ledger and everything recalled).
+- Whole-system simulator `tests/slices.rs`: 1 and 3 shards, 30 seeds x 3,000 steps
+  each, gateways entering orders at the group, grants, recalls, withdrawals, phase 1
+  orders alongside, 8% loss, 7% duplication, reordering, crashes of forwarders,
+  settlers and gateways, ledger and group failovers. Census over 20 seeds: 3.1K drops,
+  2.8K duplicates, 1.3K role crashes, 243 ledger and 203 group failovers, 199 orders
+  entered through slices, 660 refused by the local credit check, 197 trades involving
+  slice orders (154 against phase 1 orders), 831 returns, 315 settles refused as gaps.
+  After faults stop: converged, no anomaly, money conserved across shards, every lent
+  unit recalled and returned.
+- Mutation tests, 17 injected bugs, all caught by assertion (none by compile error):
+  credit check skipped; reports re-sent (`p` not advanced); recall takes committed
+  funds; withdrawal may use lent funds; grant applied again on a duplicate; recall
+  without reporting net first; slice fees never reported; `Returned` not credited;
+  `SliceOut` letting lent go negative; `Lend` not moving funds; slice settling foreign
+  events (ledger and simulator); and in the tier: epoch without the barrier, request
+  dedup removed, grants bypassing the intake, reports never appended to the group
+  stream, epoch cursors not advanced, snapshot without the credit section. Caveat:
+  "credit check skipped" mutates `Ledger::reserve`, which both phases use.
+
+**Measurement** (`credit_bench`, release build, one thread, state-machine level: no
+network, log, fsync or replication; 100,000 orders, 1,000 accounts, 4 symbols; ns per
+order on the apply path):
+
+| | 1 partition | 4 partitions |
+|---|---|---|
+| phase 1: ledger `Reserve` + forwarded `Submit`, one per entry | 1,264 | 1,168 |
+| phase 1, forwarded in batches of 32 | 636 | 597 |
+| phase 2, one request per entry, epoch 64 | 17,267 | 20,039 |
+| phase 2, epoch 1,024 | 3,954 | 3,913 |
+| phase 2, epoch 16,384 | 1,390 | ~1,700 |
+| phase 2, no epoch | 1,113 | ~1,130 |
+
+What it shows: per-order CPU of the credit path itself (about 1.1 us) is the same as
+phase 1's two applies; the **epoch barrier costs about 1 ms**, so short epochs make the
+apply path far slower than phase 1, and the epoch must be thousands of entries. What it
+does not show: the point of phase 2, one replicated hop instead of two, is network
+round trips and fsyncs that this test cannot see; order-to-ack latency on the
+open-loop harness is not measured. Phase 1's settlement into the ledger is off the
+order path and not counted; phase 2's own settlement (the epochs) is.
+
+**Not done.** Refill policy and automatic lending (Lend and Recall are explicit);
+per-group outboxes (several groups per ledger shard); a driver for idle groups (an
+epoch is entry-counted, so a quiet group needs periodic no-op entries from its node);
+a network service for tag 6 requests and the group stream's use by the real-process
+scripts (the tier exposes them in process and through `TierView::read`); IOC and
+market orders at the group (orders entered are GTC limits); an age sweep for slice
+orders (the phase 1 reconciler does not see them); a cheaper epoch (a barrier-free
+scheme would need the matcher's fills to be applied on the log's own thread);
+real-process `kill -9` runs with slices; position or rate limits in the credit table.
